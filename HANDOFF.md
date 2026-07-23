@@ -415,3 +415,8 @@ Cleared remaining PARITY.md checkboxes except deliberate non-goals (live APIs).
 
 **Harness:** `tests/parity_exercise.mjs`, `tests/run_node_check.mjs`, `tests/boot_probe.mjs`. package.json import map + node_modules/three shim for Node.
 
+
+---
+
+**Integration roadmap (2026-07-23):** see `INTEGRATION.md` (CityStore + FP/Pixi toggle; do not implement until owner starts that work).
+

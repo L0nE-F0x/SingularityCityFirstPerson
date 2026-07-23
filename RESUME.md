@@ -30,3 +30,10 @@ Modes: **O** orbit · **X** x-ray · **H** holomap · **Ctrl+D** / **`** termina
 3. Use serve.py not http.server
 4. Human pointer-lock + WASD check still open
 
+
+## Integration (next major product direction)
+
+See **`INTEGRATION.md`** — plan for merging FP into singularitycity.net as a
+toggleable view with shared CityStore / live data / Supabase. **Do not start
+that work until the owner explicitly says so.** Standalone FP + Netlify deploy
+remain valid until then.
