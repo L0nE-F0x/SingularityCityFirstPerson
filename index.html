@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Singularity City — First Person</title>
+<meta name="description" content="Walk the streets of Singularity City in first person. Every AI lab, every district, every citizen — the entire AI industry as an explorable city.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏙️</text></svg>">
+<script type="importmap">
+{
+    "imports": {
+        "three": "./lib/three.module.js",
+        "three/addons/utils/BufferGeometryUtils.js": "./lib/BufferGeometryUtils.js"
+    }
+}
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- ═══ START SCREEN ═══ -->
+<div id="startScreen">
+    <div class="start-inner">
+        <div class="start-kicker">SINGULARITYCITY.NET PRESENTS</div>
+        <h1 class="start-title">SINGULARITY CITY</h1>
+        <div class="start-sub">— FIRST PERSON —</div>
+        <p class="start-desc">The entire AI industry, alive around you. Walk the streets between the lab HQs,
+        the GPU port, the power grid, the space pads and the hidden Underground. 20 districts. 100+ buildings.
+        Hundreds of model citizens living their day.</p>
+        <button id="enterBtn">▶ &nbsp;ENTER THE CITY</button>
+        <div class="start-controls">
+            <div><b>WASD</b> move</div><div><b>MOUSE</b> look</div><div><b>SHIFT</b> sprint</div>
+            <div><b>SPACE</b> jump</div><div><b>E</b> interact</div><div><b>TAB</b> city panels</div>
+            <div><b>M</b> minimap</div><div><b>T</b> auto-tour</div><div><b>Ctrl+D</b> / <b>`</b> terminal</div>
+            <div><b>O</b> orbit</div><div><b>X</b> x-ray</div><div><b>H</b> holomap</div>
+            <div><b>F</b> lift floor</div><div><b>ESC</b> pause</div>
+        </div>
+        <div class="start-opts">
+            <label>Quality
+                <select id="qualitySel">
+                    <option value="low">Low</option>
+                    <option value="medium" selected>Medium</option>
+                    <option value="high">High</option>
+                </select>
+            </label>
+            <label><input type="checkbox" id="musicChk" checked> Music</label>
+        </div>
+        <div class="start-foot">Headphones recommended · Click captures your mouse · ESC releases it</div>
+    </div>
+</div>
+
+<!-- ═══ HUD ═══ -->
+<div id="hud" class="hidden">
+    <div id="crosshair"></div>
+    <div id="banner" class="hidden"></div>
+    <div id="prompt" class="hidden"></div>
+    <div id="lookLabel" class="hidden"></div>
+    <div id="hudLeft">
+        <div id="hudClock">00:00</div>
+        <div id="hudWeather">☀️ Clear</div>
+        <div id="hudDistrict">🏙️ Singularity City</div>
+    </div>
+    <div id="hudRight">
+        <div id="hudIndex" title="Global AI Index">AI INDEX <b>512</b></div>
+        <div id="hudPop" title="Citizens">POP <b>0</b></div>
+    </div>
+    <canvas id="minimap" width="200" height="170" class="hidden"></canvas>
+    <div id="questTracker" class="hidden"></div>
+    <div id="toasts"></div>
+    <div id="tourCaption" class="hidden"></div>
+    <div id="hintBar">TAB panels · M map · T tour · Ctrl+D terminal · O/X/H modes · ESC menu</div>
+</div>
+
+<!-- ═══ PANEL OVERLAY (pause menu + all data panels) ═══ -->
+<div id="panelOverlay" class="hidden">
+    <div id="panelBox">
+        <button id="panelClose">✕</button>
+        <div id="panelContent"></div>
+    </div>
+</div>
+
+<!-- ═══ PAUSE MENU ═══ -->
+<div id="pauseMenu" class="hidden">
+    <div class="pause-inner">
+        <div class="pause-title">⏸ PAUSED</div>
+        <div class="pause-grid">
+            <button data-panel="census">📋 Census</button>
+            <button data-panel="leaderboard">📊 Leaderboard</button>
+            <button data-panel="quests">📜 Quests</button>
+            <button data-panel="achievements">🏆 Achievements</button>
+            <button data-panel="newspaper">📰 Newspaper</button>
+            <button data-panel="calendar">📅 Calendar</button>
+            <button data-panel="compute">🖥️ Compute</button>
+            <button data-panel="costs">💲 API Costs</button>
+            <button data-panel="family">🧬 Family Tree</button>
+            <button data-panel="compare">⚖️ Compare</button>
+            <button data-panel="map">🗺️ City Map</button>
+            <button data-panel="settings">⚙️ Settings</button>
+        </div>
+        <div class="pause-foot">ESC / TAB to resume</div>
+    </div>
+</div>
+
+<div id="vignette"></div>
+<div id="flash"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

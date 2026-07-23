@@ -1,0 +1,9 @@
+{
+  "name": "singularity-city-first-person",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "three": "./lib/three.module.js",
+    "three/addons/utils/BufferGeometryUtils.js": "./lib/BufferGeometryUtils.js"
+  }
+}

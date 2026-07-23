@@ -1,0 +1,208 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   CITY LAYOUT — places every building into the 5×4 district grid.
+   Ported from SingularityCity3D districts.js (round-robin quadrant clusters
+   around an inner cross-road), extended with roads, walkable plazas and
+   collision boxes.
+   ══════════════════════════════════════════════════════════════════════════ */
+import { DISTRICTS, BLDS, DC_FACILITIES, BIOMES } from './data.js';
+import { CELL_W, CELL_D, GAP, GRID_COLS, GRID_ROWS, FLOOR_H, CITY_W, CITY_D, G } from './state.js';
+
+// Road cross-sections, in world units (10 u = 1 m). A "main" road is a 12 m
+// carriageway — two 3 m lanes each way — with 4 m sidewalks either side.
+export const CARRIAGE = { main: 120, ring: 96, inner: 44 };
+export const SIDEWALK = { main: 38, ring: 20, inner: 16 };
+export const INNER_STRIP = CARRIAGE.inner + SIDEWALK.inner * 2;
+export const KERB_H = 1.8;
+export const LANE_W = 30;          // one lane; cars sit on its centre
+
+export const City = {
+    districts: [],          // enriched district defs with world coords
+    roads: [],              // { x, z, w, d, vertical, carriage, sidewalk }
+    avenueXs: [], streetZs: [],   // road centrelines for traffic/citizens
+    plazas: [],             // open walkable rects (park hearts etc.)
+
+    cellCenter(col, row) {
+        const startX = -CITY_W / 2 + CELL_W / 2;
+        const startZ = -CITY_D / 2 + CELL_D / 2;
+        return { x: startX + col * (CELL_W + GAP), z: startZ + row * (CELL_D + GAP) };
+    },
+
+    layout() {
+        // Merge DC facilities into the building list (they're buildings too)
+        for (const dc of DC_FACILITIES) {
+            if (!BLDS.find(b => b.id === dc.id)) {
+                BLDS.push({
+                    id: dc.id, name: dc.name, w: dc.w || 160, fl: 3,
+                    emoji: dc.type === 'chipfab' ? '🔧' : '🖥️',
+                    type: dc.type === 'chipfab' ? 'fab' : 'datacenter',
+                    desc: dc.desc, dcData: dc
+                });
+            }
+        }
+
+        const innerRoadHalf = 30;
+        const inset = 30;
+        const halfW = CELL_W / 2;
+        const quadAvail = halfW - innerRoadHalf - inset;
+        const QUADS = [{ dx: -1, dz: -1 }, { dx: 1, dz: -1 }, { dx: -1, dz: 1 }, { dx: 1, dz: 1 }];
+
+        this.districts = DISTRICTS.map(def => {
+            const c = this.cellCenter(def.col, def.row);
+            const d = { ...def, cx: c.x, cz: c.z, biomeDef: BIOMES[def.biome] };
+            const blds = def.bldIds.map(id => BLDS.find(b => b.id === id)).filter(Boolean);
+
+            // Round-robin into 4 quadrant clusters
+            const quadBlds = [[], [], [], []];
+            blds.forEach((b, i) => quadBlds[i % 4].push(b));
+
+            quadBlds.forEach((qb, qi) => {
+                if (!qb.length) return;
+                const N = qb.length;
+                const cols = Math.max(1, Math.ceil(Math.sqrt(N)));
+                const rows = Math.max(1, Math.ceil(N / cols));
+                const slotW = Math.min(210, quadAvail / cols);
+                const slotD = Math.min(180, quadAvail / rows);
+                const clusterW = cols * slotW, clusterD = rows * slotD;
+                const off = QUADS[qi];
+                const ccx = c.x + off.dx * (innerRoadHalf + clusterW / 2);
+                const ccz = c.z + off.dz * (innerRoadHalf + clusterD / 2);
+
+                qb.forEach((b, i) => {
+                    const col = i % cols, row = Math.floor(i / cols);
+                    const bx = ccx - clusterW / 2 + col * slotW + slotW / 2;
+                    const bz = ccz - clusterD / 2 + row * slotD + slotD / 2;
+                    const bw = Math.min(b.w, slotW - 24);
+                    const bd = Math.min(b.w * 0.8, slotD - 24);
+                    const bh = Math.max(FLOOR_H * 0.7, (b.fl || 3) * FLOOR_H);
+                    const p = {
+                        b, id: b.id, x: bx, z: bz, w: bw, d: bd, h: bh,
+                        district: d.id, rot: 0
+                    };
+                    G.placements.push(p);
+                    G.bldById[b.id] = Object.assign(b, { worldX: bx, worldZ: bz, worldH: bh, worldW: bw, worldD: bd, district: d.id });
+                    // Collide box (pad a little). Open/walk-through types get
+                    // their own precise colliders in world.js instead.
+                    const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish']);
+                    if (!OPEN.has(b.type)) {
+                        G.colliders.push({ x0: bx - bw / 2 - 2, z0: bz - bd / 2 - 2, x1: bx + bw / 2 + 2, z1: bz + bd / 2 + 2, id: b.id });
+                    }
+                });
+            });
+            return d;
+        });
+
+        // ── Roads: the GAP strips between cells + perimeter ring ──
+        // Each road is a strip of total width `w`/`d` split into a central
+        // carriageway (asphalt, CARRIAGE wide) and a raised sidewalk on either
+        // side. Everything downstream — lane markings, kerbs, car lanes and
+        // pedestrian paths — is derived from these two numbers, so the road
+        // surface and the things using it can never disagree.
+        // Vertical avenues between columns
+        for (let c = 0; c < GRID_COLS - 1; c++) {
+            const x = -CITY_W / 2 + CELL_W + GAP / 2 + c * (CELL_W + GAP);
+            this.roads.push({ x, z: 0, w: GAP, d: CITY_D, vertical: true, carriage: CARRIAGE.main, sidewalk: SIDEWALK.main });
+            this.avenueXs.push(x);
+        }
+        // Horizontal streets between rows
+        for (let r = 0; r < GRID_ROWS - 1; r++) {
+            const z = -CITY_D / 2 + CELL_D + GAP / 2 + r * (CELL_D + GAP);
+            this.roads.push({ x: 0, z, w: CITY_W, d: GAP, vertical: false, carriage: CARRIAGE.main, sidewalk: SIDEWALK.main });
+            this.streetZs.push(z);
+        }
+        // Perimeter ring
+        const per = 140;
+        this.roads.push({ x: -CITY_W / 2 - GAP / 2 + 30, z: 0, w: per, d: CITY_D + GAP, vertical: true, carriage: CARRIAGE.ring, sidewalk: SIDEWALK.ring });
+        this.roads.push({ x: CITY_W / 2 + GAP / 2 - 30, z: 0, w: per, d: CITY_D + GAP, vertical: true, carriage: CARRIAGE.ring, sidewalk: SIDEWALK.ring });
+        this.roads.push({ x: 0, z: -CITY_D / 2 - GAP / 2 + 30, w: CITY_W + GAP, d: per, vertical: false, carriage: CARRIAGE.ring, sidewalk: SIDEWALK.ring });
+        this.roads.push({ x: 0, z: CITY_D / 2 + GAP / 2 - 30, w: CITY_W + GAP, d: per, vertical: false, carriage: CARRIAGE.ring, sidewalk: SIDEWALK.ring });
+        this.ringX = [-CITY_W / 2 - GAP / 2 + 30, CITY_W / 2 + GAP / 2 - 30];
+        this.ringZ = [-CITY_D / 2 - GAP / 2 + 30, CITY_D / 2 + GAP / 2 - 30];
+
+        // Inner cross roads, one per district (previously built straight into
+        // the ground mesh, so nothing else knew they existed)
+        for (const d of this.districts) {
+            this.roads.push({ x: d.cx, z: d.cz, w: INNER_STRIP, d: CELL_D, vertical: true, carriage: CARRIAGE.inner, sidewalk: SIDEWALK.inner, inner: true });
+            this.roads.push({ x: d.cx, z: d.cz, w: CELL_W, d: INNER_STRIP, vertical: false, carriage: CARRIAGE.inner, sidewalk: SIDEWALK.inner, inner: true });
+        }
+
+        // districtAt(x, z) lookup helper
+        G.districtAt = (x, z) => {
+            for (const d of this.districts) {
+                if (Math.abs(x - d.cx) <= CELL_W / 2 && Math.abs(z - d.cz) <= CELL_D / 2) return d;
+            }
+            return null;
+        };
+
+        return this.districts;
+    },
+
+    // Nearest road intersection to a world point (for citizen routing)
+    nearestIntersection(x, z) {
+        let bx = this.avenueXs[0] ?? this.ringX[0];
+        for (const ax of [...this.avenueXs, ...this.ringX]) if (Math.abs(x - ax) < Math.abs(x - bx)) bx = ax;
+        let bz = this.streetZs[0] ?? this.ringZ[0];
+        for (const sz of [...this.streetZs, ...this.ringZ]) if (Math.abs(z - sz) < Math.abs(z - bz)) bz = sz;
+        return { x: bx, z: bz };
+    },
+
+    // ── cross-section lookups ────────────────────────────────────────────────
+    // Cars and pedestrians both ask these, so a car lane and the sidewalk a
+    // pedestrian walks on are always derived from the same carriageway width.
+    _index() {
+        if (this._byX) return;
+        this._byX = new Map(); this._byZ = new Map();
+        for (const r of this.roads) {
+            if (r.vertical) { if (!this._byX.has(r.x)) this._byX.set(r.x, r); }
+            else if (!this._byZ.has(r.z)) this._byZ.set(r.z, r);
+        }
+    },
+    roadAt(coord, vertical) {
+        this._index();
+        return (vertical ? this._byX : this._byZ).get(coord) || { carriage: CARRIAGE.main, sidewalk: SIDEWALK.main };
+    },
+    // centre of lane `n` (0 = innermost) on the given side (+1 / -1)
+    laneCentre(coord, vertical, side, n = 0) {
+        const r = this.roadAt(coord, vertical);
+        const lanes = Math.max(1, Math.floor(r.carriage / 2 / LANE_W));
+        const lane = Math.min(n, lanes - 1);
+        return coord + side * (lane * LANE_W + LANE_W / 2);
+    },
+    // centre of the sidewalk on the given side of a road
+    sidewalkCentre(coord, vertical, side) {
+        const r = this.roadAt(coord, vertical);
+        return coord + side * (r.carriage / 2 + r.sidewalk / 2);
+    },
+    // is this point on tarmac? (pedestrians use it to stay off the road)
+    onCarriageway(x, z) {
+        this._index();
+        for (const [cx, r] of this._byX) if (Math.abs(x - cx) < r.carriage / 2) return true;
+        for (const [cz, r] of this._byZ) if (Math.abs(z - cz) < r.carriage / 2) return true;
+        return false;
+    },
+    // standing on a raised sidewalk? (so pedestrians stand on it, not in it)
+    onSidewalk(x, z) {
+        this._index();
+        for (const [cx, r] of this._byX) {
+            const d = Math.abs(x - cx);
+            if (d >= r.carriage / 2 && d <= r.carriage / 2 + r.sidewalk) return true;
+        }
+        for (const [cz, r] of this._byZ) {
+            const d = Math.abs(z - cz);
+            if (d >= r.carriage / 2 && d <= r.carriage / 2 + r.sidewalk) return true;
+        }
+        return false;
+    },
+    // nudge a point off the tarmac onto the nearest pavement
+    offRoad(x, z) {
+        this._index();
+        for (const [cx, r] of this._byX) {
+            const d = x - cx;
+            if (Math.abs(d) < r.carriage / 2) x = cx + Math.sign(d || 1) * (r.carriage / 2 + r.sidewalk / 2);
+        }
+        for (const [cz, r] of this._byZ) {
+            const d = z - cz;
+            if (Math.abs(d) < r.carriage / 2) z = cz + Math.sign(d || 1) * (r.carriage / 2 + r.sidewalk / 2);
+        }
+        return { x, z };
+    }
+};

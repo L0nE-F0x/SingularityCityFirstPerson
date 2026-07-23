@@ -1,0 +1,27 @@
+# dependencies / local-only
+node_modules/
+.package-lock.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+.idea/
+.vscode/
+*.log
+
+# local agent / session noise
+.grok-sessions/
+.grok/
+
+# screenshots & headless junk
+shot*.png
+*.png.bak
+chrome-profile*/
+tests/chrome*/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
