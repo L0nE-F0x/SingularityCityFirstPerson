@@ -29,9 +29,9 @@ export function facade(floors, opts = {}) {
 
     // ── cladding: concrete with a vertical gradient and grain ──
     const g = x.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#d6dae1'); g.addColorStop(0.55, '#c2c7d0'); g.addColorStop(1, '#a9afb9');
+    g.addColorStop(0, '#e2e6ee'); g.addColorStop(0.4, '#c8ced8'); g.addColorStop(0.75, '#b0b7c2'); g.addColorStop(1, '#969eaa');
     x.fillStyle = g; x.fillRect(0, 0, W, H);
-    for (let i = 0; i < 2600; i++) {
+    for (let i = 0; i < 4200; i++) {
         x.fillStyle = `rgba(0,0,0,${Math.random() * 0.045})`;
         x.fillRect(Math.random() * W, Math.random() * H, 2, 2);
     }
@@ -60,19 +60,26 @@ export function facade(floors, opts = {}) {
             // recessed reveal
             x.fillStyle = 'rgba(60,66,78,0.5)';
             x.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
-            // glass: sky reflection on top, room darkness below
+            // glass: brighter sky reflection + deep room (reads less like flat paint)
             const wg = x.createLinearGradient(wx, wy, wx, wy + wh);
-            wg.addColorStop(0, '#8fb4d8');
-            wg.addColorStop(0.45, '#4d637e');
-            wg.addColorStop(1, '#2b3648');
+            wg.addColorStop(0, '#b8d4f0');
+            wg.addColorStop(0.22, '#6a8eb0');
+            wg.addColorStop(0.55, '#3a4f68');
+            wg.addColorStop(1, '#1a2434');
             x.fillStyle = wg; x.fillRect(wx, wy, ww, wh);
-            // mullion + transom
-            x.fillStyle = 'rgba(200,206,216,0.5)';
-            x.fillRect(wx + ww / 2 - 0.5, wy, 1, wh);
-            x.fillRect(wx, wy + wh * 0.34, ww, 1);
+            // specular highlight strip (fake reflection)
+            x.fillStyle = 'rgba(220,235,255,0.18)';
+            x.fillRect(wx + 1, wy + 1, ww * 0.35, wh * 0.28);
+            // mullion + transom + frame
+            x.fillStyle = 'rgba(210,216,226,0.65)';
+            x.fillRect(wx + ww / 2 - 0.6, wy, 1.2, wh);
+            x.fillRect(wx, wy + wh * 0.34, ww, 1.2);
+            x.strokeStyle = 'rgba(180,188,200,0.45)';
+            x.lineWidth = 1;
+            x.strokeRect(wx + 0.5, wy + 0.5, ww - 1, wh - 1);
             // sill
-            x.fillStyle = 'rgba(232,236,242,0.55)';
-            x.fillRect(wx - 2, wy + wh + 2, ww + 4, 2);
+            x.fillStyle = 'rgba(240,244,250,0.7)';
+            x.fillRect(wx - 2, wy + wh + 2, ww + 4, 2.5);
 
             if (Math.random() < (opts.litRatio ?? 0.55)) {
                 const warm = Math.random() < 0.78;
@@ -184,24 +191,43 @@ function roundRect(x, px, py, w, h, r) {
 // grid running across the road as well as along it. Markings are geometry, in
 // world.js `_buildRoadMarkings`.
 export function road() {
-    const [c, x] = canvas(128, 128);
-    x.fillStyle = '#25282f'; x.fillRect(0, 0, 128, 128);
-    // aggregate speckle
-    for (let i = 0; i < 900; i++) {
+    const [c, x] = canvas(256, 256);
+    // layered asphalt base
+    const g = x.createLinearGradient(0, 0, 256, 256);
+    g.addColorStop(0, '#2a2e36'); g.addColorStop(0.5, '#23262e'); g.addColorStop(1, '#1e2128');
+    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+    // aggregate / chip seal
+    for (let i = 0; i < 2800; i++) {
         const v = Math.random();
-        x.fillStyle = v < 0.5 ? `rgba(255,255,255,${Math.random() * 0.045})`
-            : `rgba(0,0,0,${Math.random() * 0.16})`;
-        x.fillRect(Math.random() * 128, Math.random() * 128, 1.5, 1.5);
+        x.fillStyle = v < 0.45 ? `rgba(255,255,255,${Math.random() * 0.05})`
+            : v < 0.8 ? `rgba(0,0,0,${Math.random() * 0.18})`
+            : `rgba(90,100,110,${Math.random() * 0.08})`;
+        x.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2, 1 + Math.random() * 2);
     }
-    // faint wheel-polished bands + patches, so big spans aren't dead flat
-    for (let i = 0; i < 5; i++) {
-        x.fillStyle = `rgba(255,255,255,${0.012 + Math.random() * 0.014})`;
-        x.fillRect(0, Math.random() * 128, 128, 6 + Math.random() * 12);
+    // wheel-polished longitudinal bands
+    for (let i = 0; i < 8; i++) {
+        x.fillStyle = `rgba(255,255,255,${0.01 + Math.random() * 0.018})`;
+        x.fillRect(0, 20 + i * 28 + Math.random() * 6, 256, 5 + Math.random() * 10);
     }
-    for (let i = 0; i < 7; i++) {
-        x.fillStyle = `rgba(0,0,0,${0.05 + Math.random() * 0.06})`;
-        const w = 18 + Math.random() * 40;
-        x.fillRect(Math.random() * 128, Math.random() * 128, w, w * 0.6);
+    // oil stains / patches
+    for (let i = 0; i < 14; i++) {
+        x.fillStyle = `rgba(0,0,0,${0.06 + Math.random() * 0.1})`;
+        const w = 22 + Math.random() * 55;
+        x.beginPath();
+        x.ellipse(Math.random() * 256, Math.random() * 256, w, w * (0.4 + Math.random() * 0.4), Math.random() * Math.PI, 0, Math.PI * 2);
+        x.fill();
+    }
+    // hairline cracks
+    x.strokeStyle = 'rgba(0,0,0,0.2)'; x.lineWidth = 1;
+    for (let i = 0; i < 12; i++) {
+        x.beginPath();
+        let px = Math.random() * 256, py = Math.random() * 256;
+        x.moveTo(px, py);
+        for (let k = 0; k < 4; k++) {
+            px += (Math.random() - 0.5) * 40; py += (Math.random() - 0.5) * 40;
+            x.lineTo(px, py);
+        }
+        x.stroke();
     }
     const t = tex(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -210,12 +236,30 @@ export function road() {
 
 // ─── Sidewalk / plaza pavement ───────────────────────────────────────────────
 export function pavement() {
-    const [c, x] = canvas(64, 64);
-    x.fillStyle = '#6b7079'; x.fillRect(0, 0, 64, 64);
-    x.strokeStyle = 'rgba(0,0,0,0.25)'; x.lineWidth = 1;
-    for (let i = 0; i <= 64; i += 16) {
-        x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 64); x.stroke();
-        x.beginPath(); x.moveTo(0, i); x.lineTo(64, i); x.stroke();
+    const [c, x] = canvas(128, 128);
+    x.fillStyle = '#6e7480'; x.fillRect(0, 0, 128, 128);
+    // per-tile variation
+    for (let ty = 0; ty < 128; ty += 32) {
+        for (let tx = 0; tx < 128; tx += 32) {
+            x.fillStyle = `rgba(${100 + Math.random() * 30|0},${105 + Math.random() * 25|0},${110 + Math.random() * 25|0},${0.15 + Math.random() * 0.2})`;
+            x.fillRect(tx + 1, ty + 1, 30, 30);
+        }
+    }
+    // joint lines (grout)
+    x.strokeStyle = 'rgba(30,34,42,0.45)'; x.lineWidth = 2;
+    for (let i = 0; i <= 128; i += 32) {
+        x.beginPath(); x.moveTo(i, 0); x.lineTo(i, 128); x.stroke();
+        x.beginPath(); x.moveTo(0, i); x.lineTo(128, i); x.stroke();
+    }
+    x.strokeStyle = 'rgba(200,206,216,0.12)'; x.lineWidth = 1;
+    for (let i = 0; i <= 128; i += 32) {
+        x.beginPath(); x.moveTo(i + 1, 0); x.lineTo(i + 1, 128); x.stroke();
+        x.beginPath(); x.moveTo(0, i + 1); x.lineTo(128, i + 1); x.stroke();
+    }
+    // surface grit
+    for (let i = 0; i < 600; i++) {
+        x.fillStyle = `rgba(0,0,0,${Math.random() * 0.12})`;
+        x.fillRect(Math.random() * 128, Math.random() * 128, 1.5, 1.5);
     }
     const t = tex(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -417,3 +461,4 @@ export function glowSprite(color = 'rgba(255,255,255,1)') {
     x.fillStyle = g; x.fillRect(0, 0, 64, 64);
     return tex(c, false);
 }
+

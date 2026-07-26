@@ -1,4 +1,4 @@
-/* ══════════════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════════════
    SINGULARITY CITY — FIRST PERSON · main entry
    Boot: data → layout → renderer → world → systems → loop.
    Performance posture (from the 3D-version autopsy): no shadow maps, no
@@ -10,6 +10,7 @@ import { City } from './city.js';
 import { World } from './world.js';
 import { Citizens } from './citizens.js';
 import { Traffic } from './traffic.js';
+import { Signals } from './signals.js';
 import { Weather } from './weather.js';
 import { Player } from './player.js';
 import { Interact } from './interact.js';
@@ -34,8 +35,11 @@ import { Conference } from './conference.js';
 import { Seasonal } from './seasonal.js';
 import { Kardashev } from './kardashev.js';
 import { Wetness } from './wetness.js';
-import { Multiplayer } from './multiplayer.js';
 import { Terminal } from './terminal.js';
+import { CityStore } from './store/city_store.js';
+import { Live } from './store/live.js';
+import { Shell } from './shell.js';
+import { readResumeToken, clearResumeToken } from './store/nav.js';
 
 // expose for inline panel handlers (newspaper button) + debugging
 window.G = G;
@@ -97,6 +101,8 @@ async function boot() {
     Weather.init(G.scene);
     Citizens.init(G.scene);
     Traffic.init(G.scene);
+    Signals.init(G.scene);
+    G.signals = Signals;
     Interior.init(G.scene);
     Vendors.build(G.scene);
     ChatBubbles.init(G.scene);
@@ -116,7 +122,6 @@ async function boot() {
     Seasonal.init(G.scene);
     Kardashev.init(G.scene);
     Wetness.init(G.scene);
-    Multiplayer.init(G.scene);
     Terminal.init();
     G.vcDealFlow = VCDealFlow;
     G.researchPapers = ResearchPapers;
@@ -129,7 +134,6 @@ async function boot() {
     G.seasonal = Seasonal;
     G.kardashev = Kardashev;
     G.wetness = Wetness;
-    G.multiplayer = Multiplayer;
     G.terminal = Terminal;
     // UI before Conference — unlock toasts need HUD nodes
     UI.init();
@@ -138,6 +142,23 @@ async function boot() {
     Player.init();
     Interact.init();
     Player.placeAtSpawn();
+
+    // Integration: live data + view shell (CityStore already init via Progress)
+    G.store = CityStore;
+    G.live = Live;
+    G.shell = Shell;
+    Live.start();
+    Shell.init();
+    // Arriving from Pixi 2D hard-swap: toast + consume token
+    {
+        const tok = readResumeToken();
+        if (tok && tok.from === 'pixi') {
+            clearResumeToken();
+            setTimeout(() => {
+                G.ui?.addToast?.('↩ Resumed First Person from 2D city', 'info');
+            }, 800);
+        }
+    }
 
     // ── start screen ──
     const startGame = () => {
@@ -150,6 +171,7 @@ async function boot() {
         UI.setWeather(Weather._label());
         Player.lock();
         Progress.unlock('first_steps');
+        setTimeout(() => UI.addToast('Tip: press <b>ESC</b> to free the mouse, or <b>P</b> for 2D City', 'info'), 2500);
         UI.banner('🏙️ SINGULARITY CITY', 'the entire AI industry, alive around you');
     };
     document.getElementById('enterBtn').addEventListener('click', () => {
@@ -184,12 +206,12 @@ async function boot() {
             Birds.update(1 / 30, t);
             CitizenOfDay.update(1 / 30);
             Traffic.update(1 / 30, t);
+            Signals.update(1 / 30);
             VCDealFlow.update(1 / 30);
             ResearchPapers.update(1 / 30);
             Metro.update(1 / 30);
             Jail.update(1 / 30);
             Court.update(1 / 30);
-            Multiplayer.update(1 / 30);
         }
     }
 
@@ -218,8 +240,15 @@ async function boot() {
         G.tick++;
         G.time = clock.elapsedTime;
         G.dayPhase = computeDayPhase(dt);
+        CityStore.syncSim({
+            dayPhase: G.dayPhase,
+            timeScale: G.timeScale,
+            weatherState: Weather.state,
+            weatherIntensity: Weather.intensity,
+            climate: Weather.climate
+        });
 
-        if (G.started) {
+        if (G.started && CityStore.getView() !== 'map') {
             if (!G.orbitMode && !G.terminalOpen) Player.update(dt);
             Tour.update(dt);
             Interact.update(dt);
@@ -228,6 +257,7 @@ async function boot() {
             Birds.update(dt, G.time);
             CitizenOfDay.update(dt);
             Traffic.update(dt, G.time);
+            Signals.update(dt);
             Weather.update(dt, G.time);
             World.update(dt, G.time);
             VCDealFlow.update(dt);
@@ -242,9 +272,15 @@ async function boot() {
             Seasonal.update(dt);
             Kardashev.update(dt);
             Wetness.update(dt);
-            Multiplayer.update(dt);
             Terminal.update(dt);
             UI.update(dt);
+            {
+                const snap = CityStore.getSnapshot();
+                if (G.ui && typeof snap.aiIndex === 'number') {
+                    G.ui.aiIndex = snap.aiIndex;
+                    G.ui.aiDelta = snap.aiDelta || 0;
+                }
+            }
             Audio.setWeatherBeds(Weather.state, Weather.intensity, 1 - Math.max(0, Math.sin((G.dayPhase - 0.25) * Math.PI * 2)));
         }
 
@@ -263,3 +299,6 @@ boot().catch(err => {
     el.textContent = 'Failed to boot Singularity City: ' + err.message;
     document.body.appendChild(el);
 });
+
+
+

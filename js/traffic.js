@@ -1,11 +1,10 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   TRAFFIC & AMBIENT LIFE — cars (instanced, road-grid circuits), elevated
-   trams, ad blimps, a news helicopter, and Space Zone rocket launches.
+   TRAFFIC & AMBIENT LIFE — cars (instanced, road-grid circuits), ambient life, ad blimps, a news helicopter, and Space Zone rocket launches.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, CITY_W, CITY_D } from './state.js';
-import { TRAM_LINES, SPACE_ORGS, NEWS } from './data.js';
+import { TRAM_LINES, SPACE_ORGS, NEWS, FOUNDERS, LAB_HQ, LABS } from './data.js';
 import * as TEX from './textures.js';
 import { City, LANE_W } from './city.js';
 
@@ -18,11 +17,239 @@ function paint(geo, hex) {
     return geo;
 }
 
+/** Shared materials for glass (see-through to show occupants). */
+function glassMat(opacity = 0.22) {
+    return new THREE.MeshStandardMaterial({
+        color: 0xa8c8e8,
+        metalness: 0.15,
+        roughness: 0.08,
+        transparent: true,
+        opacity,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
+}
+
+/** Build a readable sedan. Forward = +X. */
+function buildSedan(bodyHex, opts = {}) {
+    const g = new THREE.Group();
+    const paintM = new THREE.MeshStandardMaterial({
+        color: bodyHex, roughness: 0.32, metalness: 0.55
+    });
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.6, metalness: 0.3 });
+    const chromeM = new THREE.MeshStandardMaterial({ color: 0xc0c8d0, roughness: 0.25, metalness: 0.85 });
+    const tireM = new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.9, metalness: 0.1 });
+
+    // chassis / lower body
+    const body = new THREE.Mesh(new THREE.BoxGeometry(48, 10, 20), paintM);
+    body.position.set(0, 9, 0);
+    // cabin
+    const cabin = new THREE.Mesh(new THREE.BoxGeometry(22, 9, 18), paintM);
+    cabin.position.set(-3, 18.5, 0);
+    // nose taper
+    const nose = new THREE.Mesh(new THREE.BoxGeometry(10, 7, 18), paintM);
+    nose.position.set(22, 8.5, 0);
+    // clear glass panes (not filled boxes) — windows as thin planes you look through
+    const gw = glassMat(opts.glassOpacity ?? 0.28);
+    const wind = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), gw);
+    wind.position.set(8.2, 18.5, 0); wind.rotation.y = Math.PI / 2;
+    const rear = new THREE.Mesh(new THREE.PlaneGeometry(14, 6.5), gw);
+    rear.position.set(-14.2, 18.5, 0); rear.rotation.y = -Math.PI / 2;
+    const sideL = new THREE.Mesh(new THREE.PlaneGeometry(18, 6.5), gw);
+    sideL.position.set(-2, 18.8, 9.2);
+    const sideR = sideL.clone(); sideR.position.z = -9.2; sideR.rotation.y = Math.PI;
+
+    // wheels
+    const wheels = new THREE.Group();
+    for (const dx of [14, -14]) for (const dz of [9.5, -9.5]) {
+        const tire = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 5.5, 4, 12), tireM);
+        tire.rotation.x = Math.PI / 2;
+        tire.position.set(dx, 5.5, dz);
+        const hub = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 4.2, 10), chromeM);
+        hub.rotation.x = Math.PI / 2;
+        hub.position.set(dx, 5.5, dz);
+        wheels.add(tire, hub);
+    }
+    // lights
+    const lampM = new THREE.MeshBasicMaterial({ color: 0xfff2cc });
+    const tailM = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
+    for (const s of [-1, 1]) {
+        const h = new THREE.Mesh(new THREE.BoxGeometry(2, 3, 4), lampM);
+        h.position.set(26, 9, s * 6); g.add(h);
+        const t = new THREE.Mesh(new THREE.BoxGeometry(2, 2.5, 3.5), tailM);
+        t.position.set(-25, 10, s * 6.5); g.add(t);
+    }
+    // bumpers
+    const fb = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 19), chromeM); fb.position.set(25.5, 6.5, 0);
+    const rb = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 19), chromeM); rb.position.set(-25.5, 6.5, 0);
+
+    g.add(body, cabin, nose, wind, rear, sideL, sideR, wheels, fb, rb);
+    g.userData.paintM = paintM;
+    return g;
+}
+
+/** VIP limousine with visible CEO figure in rear seat + name plate. */
+function buildVipLimo(founder) {
+    const labCol = new THREE.Color(founder.color || '#334155');
+    // use lab colour; Elon white -> light silver
+    const hex = labCol.getHex() === 0xffffff ? 0xd8dde6 : labCol.getHex();
+    const g = buildSedan(hex, { glassOpacity: 0.2 });
+    // stretch body slightly (limo cue)
+    g.scale.set(1.15, 1.05, 1.08);
+
+    // CEO seated in cabin (rear), large enough to read through glass
+    const seat = new THREE.Group();
+    seat.position.set(-6, 12, 0);
+    const torso = new THREE.Mesh(
+        new THREE.BoxGeometry(6, 8, 7),
+        new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7 })
+    );
+    torso.position.y = 6;
+    const head = new THREE.Mesh(
+        new THREE.SphereGeometry(3.2, 12, 10),
+        new THREE.MeshStandardMaterial({ color: 0xe8b98e, roughness: 0.65 })
+    );
+    head.position.y = 12;
+    const hair = new THREE.Mesh(
+        new THREE.SphereGeometry(3.4, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0x2a2118, roughness: 0.9 })
+    );
+    hair.position.set(0, 13.2, -0.4);
+    hair.scale.set(1, 0.55, 1.05);
+    // lab-coloured lapel pin / jacket accent
+    const pin = new THREE.Mesh(
+        new THREE.BoxGeometry(2, 3, 0.5),
+        new THREE.MeshBasicMaterial({ color: hex })
+    );
+    pin.position.set(3.2, 7, 0);
+    seat.add(torso, head, hair, pin);
+    g.add(seat);
+
+    // floating name tag above car
+    const canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = 'rgba(15,23,42,0.92)';
+    ctx.beginPath();
+    if (ctx.roundRect) { ctx.roundRect(8, 8, 240, 48, 8); ctx.fill(); } else { ctx.fillRect(8, 8, 240, 48); }
+    ctx.fillStyle = '#fbbf24';
+    ctx.font = 'bold 28px system-ui,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(founder.name, 128, 42);
+    const tex = new THREE.CanvasTexture(canvas);
+    const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: true }));
+    spr.scale.set(40, 10, 1);
+    spr.position.set(0, 36, 0);
+    g.add(spr);
+    g.userData.nameSprite = spr;
+    g.userData.founder = founder;
+    return g;
+}
+
+/** Proper helicopter: fuselage, boom, skids, spinning rotors. Nose = +X. */
+function buildHelicopter(colHex) {
+    const g = new THREE.Group();
+    const col = new THREE.Color(colHex);
+    const bodyM = new THREE.MeshStandardMaterial({ color: col, roughness: 0.35, metalness: 0.55 });
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.5, metalness: 0.4 });
+    const glassM = glassMat(0.28);
+
+    const body = new THREE.Mesh(new THREE.BoxGeometry(28, 11, 14), bodyM);
+    body.position.set(2, 10, 0);
+    const belly = new THREE.Mesh(new THREE.BoxGeometry(24, 4, 12), bodyM);
+    belly.position.set(2, 4.5, 0);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(6.5, 14, 12), bodyM);
+    nose.position.set(16, 10, 0);
+    nose.scale.set(1.15, 0.9, 0.95);
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(6.2, 14, 12), glassM);
+    canopy.position.set(12, 12, 0);
+    canopy.scale.set(1.15, 0.9, 1.0);
+    const boom = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.2, 30, 8), bodyM);
+    boom.rotation.z = Math.PI / 2;
+    boom.position.set(-22, 12, 0);
+    const fin = new THREE.Mesh(new THREE.BoxGeometry(4, 14, 1.5), bodyM);
+    fin.position.set(-36, 16, 0);
+    const stab = new THREE.Mesh(new THREE.BoxGeometry(8, 1.5, 10), bodyM);
+    stab.position.set(-34, 12, 0);
+    const tailRotor = new THREE.Group();
+    tailRotor.position.set(-37, 16, 3);
+    for (let i = 0; i < 2; i++) {
+        const b = new THREE.Mesh(new THREE.BoxGeometry(1, 12, 2.5), darkM);
+        b.rotation.z = i * Math.PI / 2;
+        tailRotor.add(b);
+    }
+    for (const s of [-1, 1]) {
+        const skid = new THREE.Mesh(new THREE.BoxGeometry(28, 1.2, 1.2), darkM);
+        skid.position.set(2, 1.2, s * 7.5);
+        const leg1 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 7, 1.2), darkM);
+        leg1.position.set(10, 4.5, s * 7.5);
+        const leg2 = leg1.clone(); leg2.position.x = -8;
+        g.add(skid, leg1, leg2);
+    }
+    const rotor = new THREE.Group();
+    rotor.position.set(0, 18, 0);
+    rotor.add(new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.8, 4, 12), darkM));
+    for (let i = 0; i < 4; i++) {
+        const blade = new THREE.Mesh(
+            new THREE.BoxGeometry(56, 0.55, 3.5),
+            new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.35, metalness: 0.65 })
+        );
+        blade.rotation.y = (i * Math.PI) / 2;
+        blade.position.y = 2;
+        // slight pitch
+        blade.rotation.z = 0.04;
+        rotor.add(blade);
+    }
+    const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(28, 40),
+        new THREE.MeshBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false })
+    );
+    disc.rotation.x = -Math.PI / 2;
+    disc.position.y = 2.1;
+    rotor.add(disc);
+    const pilot = new THREE.Mesh(
+        new THREE.SphereGeometry(2.5, 10, 8),
+        new THREE.MeshStandardMaterial({ color: 0xe8b98e, roughness: 0.7 })
+    );
+    pilot.position.set(11, 11.5, 0);
+    g.add(body, belly, nose, canopy, boom, fin, stab, tailRotor, rotor, pilot);
+    g.userData.rotor = rotor;
+    g.userData.tailRotor = tailRotor;
+    return g;
+}
+
+/** Nvidia-style supply truck (cab + green container). */
+function buildSupplyTruck() {
+    const g = new THREE.Group();
+    const green = new THREE.MeshStandardMaterial({ color: 0x3a8a48, roughness: 0.45, metalness: 0.35 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.6, metalness: 0.3 });
+    const cab = new THREE.Mesh(new THREE.BoxGeometry(22, 18, 20), green);
+    cab.position.set(28, 13, 0);
+    const wind = new THREE.Mesh(new THREE.BoxGeometry(2, 10, 16), glassMat(0.35));
+    wind.position.set(39, 15, 0);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(58, 26, 22), green);
+    box.position.set(-12, 17, 0);
+    // NVIDIA-ish mark strip
+    const stripe = new THREE.Mesh(
+        new THREE.BoxGeometry(50, 6, 0.5),
+        new THREE.MeshBasicMaterial({ color: 0x76b900 })
+    );
+    stripe.position.set(-12, 20, 11.2);
+    const stripe2 = stripe.clone(); stripe2.position.z = -11.2;
+    for (const dx of [26, -6, -30]) for (const s of [-1, 1]) {
+        const w = new THREE.Mesh(new THREE.CylinderGeometry(5.5, 5.5, 5, 12), dark);
+        w.rotation.x = Math.PI / 2;
+        w.position.set(dx, 5.5, s * 11);
+        g.add(w);
+    }
+    g.add(cab, wind, box, stripe, stripe2);
+    return g;
+}
+
+
 const CAR_GAP = 62;          // bumper-to-bumper minimum in a queue
 const STOP_LINE = 26;        // how far back from the junction a red light holds you
 const SIGNAL_PERIOD = 26;    // seconds for a full two-phase signal cycle
-const TRAM_Y = 86;        // deck height (8.6 m) — a real elevated line
-const DECK_W = 26, DECK_H = 5, PYLON_W = 13, PYLON_GAP = 190;
 
 export const Traffic = {
     cars: null, carDetail: null, carLamps: null, lampMat: null, carData: [], truck: null,
@@ -34,10 +261,12 @@ export const Traffic = {
 
     init(scene) {
         this._initCars(scene);
+        this._initVipCars(scene);
         this._initTruck(scene);
         this._initTrams(scene);
         this._initBlimps(scene);
         this._initHeli(scene);
+        this._initFounderHelis(scene);
     },
 
     // ── SUPPLY-CHAIN TRUCK ────────────────────────────────────────────────────
@@ -46,67 +275,93 @@ export const Traffic = {
     // truck (cab + green cargo box) following a road-grid polyline loop through
     // those three stops.
     _initTruck(scene) {
-        const port = G.placements.find(p => p.district === 'port' && /port|dock|warehouse|crane/i.test(p.b.name))
-            || G.placements.find(p => p.district === 'port');
-        const fab = G.placements.find(p => /nvidia|fab/i.test(p.b.name) && p.b.type === 'fab')
-            || G.placements.find(p => p.b.type === 'fab');
-        const hq = G.placements.find(p => p.b.lab === 'nvidia')
-            || G.placements.find(p => p.district === 'compute' && p.b.type === 'datacenter');
+        // Always place a supply truck on a road loop (Nvidia route when buildings exist).
+        const port = G.placements.find(p => p.district === 'port')
+            || G.placements[0];
+        const fab = G.placements.find(p => /nvidia|fab|chipfab|datacenter/i.test(p.b?.name + p.b?.type + p.b?.id))
+            || G.placements.find(p => p.district === 'compute')
+            || G.placements[Math.min(3, G.placements.length - 1)];
+        const hq = G.placements.find(p => p.b?.lab === 'nvidia' || p.b?.id === 'bld_o')
+            || G.placements.find(p => p.district === 'tech')
+            || G.placements[Math.min(5, G.placements.length - 1)];
         const stops = [port, fab, hq].filter(Boolean);
-        if (stops.length < 2) return;
-
-        // build a road-grid polyline that visits each stop's nearest intersection
+        if (stops.length < 2) {
+            // fallback: ring road loop
+            const xs = City.avenueXs?.length ? City.avenueXs : [0, 400];
+            const zs = City.streetZs?.length ? City.streetZs : [0, 400];
+            const path = [
+                { x: xs[0], z: zs[0] }, { x: xs[xs.length - 1], z: zs[0] },
+                { x: xs[xs.length - 1], z: zs[zs.length - 1] }, { x: xs[0], z: zs[zs.length - 1] },
+                { x: xs[0], z: zs[0] }
+            ];
+            this._registerTruck(scene, path);
+            return;
+        }
         const path = [];
         for (const s of stops) {
-            const i = City.nearestIntersection(s.x, s.z);
+            const sx = s.x ?? s.worldX, sz = s.z ?? s.worldZ;
+            const i = City.nearestIntersection(sx, sz);
             const lane = City.laneCentre(i.x, true, 1, 0);
             path.push({ x: lane, z: i.z });
-            path.push({ x: lane, z: s.z });
+            path.push({ x: lane, z: sz });
         }
-        // close the loop
         path.push({ ...path[0] });
+        this._registerTruck(scene, path);
+    },
+
+    _registerTruck(scene, path) {
         const segs = [];
         let total = 0;
         for (let i = 0; i < path.length - 1; i++) {
-            const len = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z);
+            const len = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z) || 1;
             segs.push(len); total += len;
         }
-
-        const green = [];
-        const g = (w, h, d, x, y, z, hex) => {
-            const b = new THREE.BoxGeometry(w, h, d); b.translate(x, y, z);
-            green.push(paint(b, hex));
-        };
-        g(20, 16, 20, 22, 12, 0, 0x2f6f3a);        // cab
-        g(6, 9, 17, 33, 14, 0, 0x0f1218);          // windscreen
-        g(58, 24, 22, -12, 16, 0, 0x3a8a48);       // cargo box
-        g(60, 3, 24, -12, 29, 0, 0x2f6f3a);        // box roof rail
-        for (const dx of [26, -6, -30]) for (const s of [-1, 1]) {
-            const w = new THREE.CylinderGeometry(5.5, 5.5, 5, 10);
-            w.rotateX(Math.PI / 2); w.translate(dx, 5, s * 11);
-            green.push(paint(w, 0x15171c));
-        }
-        const mesh = new THREE.Mesh(mergeGeometries(green, false),
-            new THREE.MeshLambertMaterial({ vertexColors: true }));
+        const mesh = buildSupplyTruck();
         scene.add(mesh);
-        this.truck = { obj: mesh, path, segs, total, dist: 0, speed: 108 };
+        this.truck = { obj: mesh, path, segs, total: total || 1, dist: 0, speed: 115 };
+        // extra delivery vans (city logistics parity)
+        this.vans = [];
+        const vanCols = [0x2563eb, 0xdc2626, 0xf59e0b];
+        for (let v = 0; v < 3; v++) {
+            const van = buildSedan(vanCols[v], { glassOpacity: 0.25 });
+            van.scale.set(1.05, 1.15, 1.1);
+            // cargo hump
+            const hump = new THREE.Mesh(
+                new THREE.BoxGeometry(20, 10, 18),
+                new THREE.MeshStandardMaterial({ color: vanCols[v], roughness: 0.4, metalness: 0.4 })
+            );
+            hump.position.set(-6, 20, 0);
+            van.add(hump);
+            scene.add(van);
+            // offset path start
+            this.vans.push({
+                obj: van, path, segs, total: total || 1,
+                dist: (v + 1) * (total || 1) / 4,
+                speed: 95 + v * 8
+            });
+        }
+    },
+
+    _stepPathVehicle(v, dt) {
+        if (!v || !v.total) return;
+        v.dist = (v.dist + v.speed * dt) % v.total;
+        let rem = v.dist;
+        for (let i = 0; i < v.segs.length; i++) {
+            if (rem <= v.segs[i] || i === v.segs.length - 1) {
+                const t = v.segs[i] ? rem / v.segs[i] : 0;
+                const a = v.path[i], b = v.path[i + 1];
+                if (!a || !b) break;
+                v.obj.position.set(a.x + (b.x - a.x) * t, 0, a.z + (b.z - a.z) * t);
+                v.obj.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) - Math.PI / 2;
+                break;
+            }
+            rem -= v.segs[i];
+        }
     },
 
     _updateTruck(dt) {
-        const tr = this.truck;
-        if (!tr) return;
-        tr.dist = (tr.dist + tr.speed * dt) % tr.total;
-        let rem = tr.dist;
-        for (let i = 0; i < tr.segs.length; i++) {
-            if (rem <= tr.segs[i] || i === tr.segs.length - 1) {
-                const t = tr.segs[i] ? rem / tr.segs[i] : 0;
-                const a = tr.path[i], b = tr.path[i + 1];
-                tr.obj.position.set(a.x + (b.x - a.x) * t, 0, a.z + (b.z - a.z) * t);
-                tr.obj.rotation.y = Math.atan2(b.x - a.x, b.z - a.z) - Math.PI / 2;
-                break;
-            }
-            rem -= tr.segs[i];
-        }
+        this._stepPathVehicle(this.truck, dt);
+        if (this.vans) for (const v of this.vans) this._stepPathVehicle(v, dt);
     },
 
     // ── CARS ─────────────────────────────────────────────────────────────────
@@ -167,8 +422,8 @@ export const Traffic = {
             scene.add(m);
             return m;
         };
-        this.cars = mk(geo.body, new THREE.MeshLambertMaterial());
-        this.carDetail = mk(geo.detail, new THREE.MeshLambertMaterial({ vertexColors: true }));
+        this.cars = mk(geo.body, new THREE.MeshStandardMaterial({ roughness: 0.38, metalness: 0.45 }));
+        this.carDetail = mk(geo.detail, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5, metalness: 0.25 }));
         this.lampMat = new THREE.MeshLambertMaterial({
             vertexColors: true, emissive: 0xffffff, emissiveIntensity: 0
         });
@@ -306,138 +561,19 @@ export const Traffic = {
         this.lampMat.emissiveIntensity = Math.min(1, Math.max(0, dark)) * 0.95;
     },
 
-    // ── TRAMS (elevated maglev, follows the road grid) ───────────────────────
-    // TRAM_Y used to be 10 — 1 m at this project's scale (10 u = 1 m), i.e.
-    // street level, with the cars ploughing down the middle of the road and
-    // nothing holding them up. Now it's a real elevated line: deck + pylons,
-    // merged/instanced into 2 extra draw calls for the whole network.
+    // ── METRO ROLLING STOCK ──────────────────────────────────────────────────
+    // Production 2D metro is UNDERGROUND. Elevated trams + pylons were a mistaken
+    // FP flourish and broke parity (trains floating over streets). Rolling stock
+    // lives in metro.js below the ground plane. Traffic only keeps empty hooks
+    // so older callers / tests that poke Traffic.trams still work.
     _initTrams(scene) {
-        const deckParts = [];
-        const pylonSpots = [];
-
-        for (const line of TRAM_LINES) {
-            const s1 = G.bldById[line.stops[0]], s2 = G.bldById[line.stops[1]];
-            if (!s1 || !s2) continue;
-            const tram = new THREE.Group();
-            const parts = [];
-            for (let i = 0; i < 3; i++) {
-                const car = new THREE.BoxGeometry(46, 13, 12); car.translate(i * 50 - 50, 8, 0);
-                paint(car, 0x1e293b);
-                const win = new THREE.BoxGeometry(38, 5, 12.5); win.translate(i * 50 - 50, 9, 0);
-                paint(win, 0xfff5b6);
-                const stripe = new THREE.BoxGeometry(46, 2, 12.6); stripe.translate(i * 50 - 50, 14, 0);
-                paint(stripe, line.color);
-                parts.push(car, win, stripe);
-            }
-            const mesh = new THREE.Mesh(mergeGeometries(parts, false), new THREE.MeshLambertMaterial({ vertexColors: true }));
-            tram.add(mesh);
-            scene.add(tram);
-
-            // route along roads: station → nearest intersection → street → avenue → station
-            const i1 = City.nearestIntersection(s1.worldX, s1.worldZ);
-            const i2 = City.nearestIntersection(s2.worldX, s2.worldZ);
-            const path = [
-                { x: s1.worldX, z: i1.z },
-                { x: i1.x, z: i1.z },
-                { x: i2.x, z: i1.z },
-                { x: i2.x, z: i2.z },
-                { x: s2.worldX, z: i2.z }
-            ];
-            // arc lengths
-            const segs = [];
-            let total = 0;
-            for (let i = 0; i < path.length - 1; i++) {
-                const len = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].z - path[i].z);
-                segs.push(len); total += len;
-            }
-            this.trams.push({
-                obj: tram, line, path, segs, total,
-                dist: Math.random() * total, dir: 1, wait: 0, wasWaiting: true,
-                speed: 130,
-                endX: [path[0].x, path[path.length - 1].x],
-                endZ: [path[0].z, path[path.length - 1].z]
-            });
-
-            // viaduct under this route: one deck box per straight segment,
-            // pylons every PYLON_GAP along it
-            for (let i = 0; i < path.length - 1; i++) {
-                const a = path[i], b = path[i + 1];
-                const len = Math.hypot(b.x - a.x, b.z - a.z);
-                if (len < 1) continue;
-                const deck = new THREE.BoxGeometry(len + DECK_W, DECK_H, DECK_W);
-                deck.rotateY(Math.atan2(b.z - a.z, b.x - a.x) * -1);
-                deck.translate((a.x + b.x) / 2, TRAM_Y - 11, (a.z + b.z) / 2);
-                deckParts.push(paint(deck, 0x4a5364));
-                for (let d = PYLON_GAP / 2; d < len; d += PYLON_GAP) {
-                    const t = d / len;
-                    pylonSpots.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t });
-                }
-            }
-        }
-
-        if (deckParts.length) {
-            const deckMesh = new THREE.Mesh(
-                mergeGeometries(deckParts, false),
-                new THREE.MeshLambertMaterial({ vertexColors: true }));
-            deckMesh.matrixAutoUpdate = false;
-            scene.add(deckMesh);
-        }
-        if (pylonSpots.length) {
-            const pg = new THREE.BoxGeometry(PYLON_W, TRAM_Y - 11, PYLON_W);
-            pg.translate(0, (TRAM_Y - 11) / 2, 0);
-            const pylons = new THREE.InstancedMesh(pg,
-                new THREE.MeshLambertMaterial({ color: 0x515a6b }), pylonSpots.length);
-            const d = new THREE.Object3D();
-            pylonSpots.forEach((s, i) => {
-                d.position.set(s.x, 0, s.z);
-                d.updateMatrix();
-                pylons.setMatrixAt(i, d.matrix);
-                // solid to the player — walking through a visible pillar reads
-                // worse than the occasional car clipping one in the median
-                G.colliders.push({
-                    x0: s.x - PYLON_W / 2, x1: s.x + PYLON_W / 2,
-                    z0: s.z - PYLON_W / 2, z1: s.z + PYLON_W / 2
-                });
-            });
-            pylons.instanceMatrix.needsUpdate = true;
-            scene.add(pylons);
-        }
+        this.trams = [];
+        // no elevated deck / pylons
     },
 
     _updateTrams(dt) {
-        for (const tr of this.trams) {
-            if (tr.wait > 0) {
-                tr.wait -= dt;
-                tr.wasWaiting = true;
-                continue;
-            }
-            if (tr.wasWaiting) {
-                tr.wasWaiting = false;
-                // departing — award train spotter if the player is close to either end
-                const p = G.camera.position;
-                const near = Math.min(
-                    Math.hypot(p.x - tr.endX[0], p.z - tr.endZ[0]),
-                    Math.hypot(p.x - tr.endX[1], p.z - tr.endZ[1]));
-                if (near < 240) G.ui?.event('tram_depart');
-            }
-            tr.dist += tr.dir * tr.speed * dt;
-            if (tr.dist >= tr.total) { tr.dist = tr.total; tr.dir = -1; tr.wait = 6; }
-            else if (tr.dist <= 0) { tr.dist = 0; tr.dir = 1; tr.wait = 6; }
-            // walk the polyline
-            let rem = tr.dist;
-            for (let i = 0; i < tr.segs.length; i++) {
-                if (rem <= tr.segs[i] || i === tr.segs.length - 1) {
-                    const t = tr.segs[i] ? rem / tr.segs[i] : 0;
-                    const a = tr.path[i], b = tr.path[i + 1];
-                    tr.obj.position.set(a.x + (b.x - a.x) * t, TRAM_Y, a.z + (b.z - a.z) * t);
-                    tr.obj.rotation.y = Math.atan2((b.x - a.x) * tr.dir, (b.z - a.z) * tr.dir) - Math.PI / 2;
-                    break;
-                }
-                rem -= tr.segs[i];
-            }
-        }
+        // metro.js owns train motion
     },
-
     // ── BLIMPS with news panels ──────────────────────────────────────────────
     _initBlimps(scene) {
         const headlines = NEWS.slice(0, 3);
@@ -479,14 +615,8 @@ export const Traffic = {
 
     // ── NEWS HELICOPTER ──────────────────────────────────────────────────────
     _initHeli(scene) {
-        const heli = new THREE.Group();
-        const body = new THREE.Mesh(new THREE.BoxGeometry(26, 12, 12), new THREE.MeshLambertMaterial({ color: 0xc0392b }));
-        const tail = new THREE.Mesh(new THREE.BoxGeometry(24, 5, 5), new THREE.MeshLambertMaterial({ color: 0x922b21 }));
-        tail.position.x = -22;
-        const rotor = new THREE.Mesh(new THREE.BoxGeometry(52, 1, 4), new THREE.MeshLambertMaterial({ color: 0x1a1a1a }));
-        rotor.position.y = 8;
-        heli.add(body, tail, rotor);
-        heli.userData.rotor = rotor;
+        const heli = buildHelicopter(0xc0392b);
+        heli.scale.setScalar(1.5);
         scene.add(heli);
         this.heli = { obj: heli, angle: 0 };
     },
@@ -496,9 +626,14 @@ export const Traffic = {
         const h = this.heli;
         h.angle += dt * 0.09;
         const r = 1400;
-        h.obj.position.set(Math.cos(h.angle) * r - 500, 360 + Math.sin(t * 0.5) * 20, Math.sin(h.angle) * r);
-        h.obj.rotation.y = -h.angle;
-        h.obj.userData.rotor.rotation.y += dt * 30;
+        const x = Math.cos(h.angle) * r - 500;
+        const z = Math.sin(h.angle) * r;
+        h.obj.position.set(x, 380 + Math.sin(t * 0.5) * 20, z);
+        const vx = -Math.sin(h.angle), vz = Math.cos(h.angle);
+        h.obj.rotation.y = Math.atan2(vx, vz) - Math.PI / 2;
+        h.obj.rotation.z = -0.1;
+        if (h.obj.userData.rotor) h.obj.userData.rotor.rotation.y += dt * 32;
+        if (h.obj.userData.tailRotor) h.obj.userData.tailRotor.rotation.x += dt * 48;
     },
 
     // ── ROCKET LAUNCHES ──────────────────────────────────────────────────────
@@ -551,13 +686,133 @@ export const Traffic = {
         const fl = this.rocket.userData.flame;
         fl.scale.set(1 + Math.sin(t * 40) * 0.15, 0.8 + Math.random() * 0.4, 1 + Math.cos(t * 37) * 0.15);
     },
+    // ── VIP / FOUNDER CARS ──────────────────────────────────────────────────
+    // Clear-glass limos with a seated CEO figure + name tag you can read.
+    _initVipCars(scene) {
+        this.vipCars = [];
+        this.vipGroup = new THREE.Group();
+        scene.add(this.vipGroup);
+        const founders = FOUNDERS || [];
+        founders.forEach((f, i) => {
+            const hq = G.bldById[LAB_HQ[f.lab]];
+            const home = G.bldById['res_' + ((LABS[f.lab] && LABS[f.lab].region) || 'us')] || G.bldById['res_us'];
+            if (!hq || !home) return;
+            const limo = buildVipLimo(f);
+            this.vipGroup.add(limo);
+
+            const hx = hq.worldX, hz = hq.worldZ;
+            const i1 = City.nearestIntersection(hx, hz);
+            const i2 = City.nearestIntersection(home.worldX, home.worldZ);
+            const lane1 = City.laneCentre(i1.x, true, 1, 0);
+            const lane2 = City.laneCentre(i2.x, true, 1, 0);
+            // rectangular circuit home ↔ HQ on real lanes
+            const path = [
+                { x: lane1, z: i1.z },
+                { x: lane2, z: i1.z },
+                { x: lane2, z: i2.z },
+                { x: lane1, z: i2.z },
+                { x: lane1, z: i1.z }
+            ];
+            const segs = [];
+            let total = 0;
+            for (let k = 0; k < path.length - 1; k++) {
+                const len = Math.hypot(path[k + 1].x - path[k].x, path[k + 1].z - path[k].z) || 1;
+                segs.push(len); total += len;
+            }
+            this.vipCars.push({
+                obj: limo, founder: f, path, segs, total: total || 1,
+                dist: (i / Math.max(1, founders.length)) * total,
+                speed: 100 + i * 5
+            });
+        });
+    },
+
+    _vipActive() {
+        // CEOs on the road most of the business day so you can actually spot them
+        const dp = G.dayPhase;
+        return dp >= 0.28 && dp < 0.92;
+    },
+
+    _updateVipCars(dt) {
+        if (!this.vipCars?.length) return;
+        const on = this._vipActive();
+        for (const v of this.vipCars) {
+            v.obj.visible = on;
+            if (!on) continue;
+            this._stepPathVehicle(v, dt);
+            // name tags face camera
+            const spr = v.obj.userData.nameSprite;
+            if (spr && G.camera) spr.quaternion.copy(G.camera.quaternion);
+        }
+    },
+
+    // ── FOUNDER HELICOPTERS ─────────────────────────────────────────────────
+    // Readable choppers, nose into direction of travel (not flying backward).
+    _initFounderHelis(scene) {
+        this.founderHelis = [];
+        const founders = FOUNDERS || [];
+        founders.forEach((f, i) => {
+            const hq = G.bldById[LAB_HQ[f.lab]];
+            if (!hq) return;
+            const col = f.color && f.color !== '#ffffff' ? f.color : (LABS[f.lab]?.color || '#c0392b');
+            const heli = buildHelicopter(col);
+            // scale up so readable from street
+            heli.scale.setScalar(1.35);
+            scene.add(heli);
+            this.founderHelis.push({
+                obj: heli,
+                founder: f,
+                hq,
+                angle: (i / founders.length) * Math.PI * 2,
+                phase: i * 1.7,
+                radius: 280 + i * 55,
+                alt: 320 + i * 35
+            });
+        });
+    },
+
+    _updateFounderHelis(dt, t) {
+        if (!this.founderHelis?.length) return;
+        const dp = G.dayPhase;
+        const flying = dp > 0.28 && dp < 0.9;
+        const woods = G.bldById['align_miri'] || G.bldById['pine_reserve'];
+        const day = new Date().getDate();
+        const weekendTrip = (day % 2 === 0) && dp > 0.42 && dp < 0.62;
+        for (const h of this.founderHelis) {
+            h.obj.visible = flying;
+            if (!flying) continue;
+            const da = dt * (0.14 + (h.phase % 1) * 0.05);
+            h.angle += da;
+            let cx = h.hq.worldX, cz = h.hq.worldZ;
+            if (weekendTrip && woods) {
+                const u = Math.sin((dp - 0.42) / 0.2 * Math.PI);
+                cx = h.hq.worldX + (woods.worldX - h.hq.worldX) * Math.max(0, u);
+                cz = h.hq.worldZ + (woods.worldZ - h.hq.worldZ) * Math.max(0, u);
+            }
+            const x = cx + Math.cos(h.angle) * h.radius;
+            const z = cz + Math.sin(h.angle) * h.radius;
+            h.obj.position.set(x, h.alt + Math.sin(t * 0.7 + h.phase) * 14, z);
+            // Travel dir for increasing angle: (-sin, cos) — nose is +X
+            const vx = -Math.sin(h.angle), vz = Math.cos(h.angle);
+            h.obj.rotation.y = Math.atan2(vx, vz) - Math.PI / 2;
+            // slight bank into turn
+            h.obj.rotation.z = -0.12;
+            h.obj.rotation.x = 0.04;
+            if (h.obj.userData.rotor) h.obj.userData.rotor.rotation.y += dt * 32;
+            if (h.obj.userData.tailRotor) h.obj.userData.tailRotor.rotation.x += dt * 48;
+        }
+    },
 
     update(dt, t) {
         this._updateCars(dt);
+        this._updateVipCars(dt);
         this._updateTruck(dt);
         this._updateTrams(dt);
         this._updateBlimps(dt, t);
         this._updateHeli(dt, t);
+        this._updateFounderHelis(dt, t);
         this._updateRockets(dt, t);
     }
 };
+
+

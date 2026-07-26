@@ -1,41 +1,51 @@
-/* ══════════════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════════════
    PROGRESSION — achievements, quests, visited districts, citizen meetings,
    easter-egg triggers, and localStorage persistence.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { G } from './state.js';
+import { CityStore } from './store/city_store.js';
 import { ACHIEVEMENTS, QUESTS, DISTRICTS } from './data.js';
 
 const SAVE_KEY = 'sc_fp_save_v1';
 
 export const Progress = {
     init() {
-        try {
-            const raw = localStorage.getItem(SAVE_KEY);
-            if (raw) {
-                const s = JSON.parse(raw);
-                G.achievements = s.achievements || {};
-                G.visitedDistricts = s.visitedDistricts || {};
-                G.metCitizens = s.metCitizens || {};
-                G.stats = Object.assign({ tramsSpotted: 0, moonClicks: 0 }, s.stats);
-                G.settings = Object.assign(G.settings, s.settings);
-                G.quality = s.quality || G.quality;
-                if (G.settings.timeScale) G.timeScale = G.settings.timeScale;
-            }
-        } catch (e) { /* fresh start */ }
+        // CityStore owns unified save (sc_city_save_v1) + legacy migration.
+        CityStore.init();
+        const snap = CityStore.getSnapshot();
+        G.achievements = snap.progress.achievements || {};
+        G.visitedDistricts = snap.progress.visitedDistricts || {};
+        G.metCitizens = snap.progress.metCitizens || {};
+        G.stats = Object.assign({ tramsSpotted: 0, moonClicks: 0 }, snap.progress.stats);
+        G.flags = Object.assign(G.flags || {}, snap.progress.flags || {});
+        G.settings = Object.assign(G.settings, snap.settings || {});
+        G.quality = snap.quality || G.quality;
+        if (G.settings.timeScale) G.timeScale = G.settings.timeScale;
+        // Keep G mirrors in sync when store patches progress elsewhere
+        CityStore.subscribe((patch) => {
+            if (!patch.progress) return;
+            if (patch.progress.achievements) Object.assign(G.achievements, patch.progress.achievements);
+            if (patch.progress.visitedDistricts) Object.assign(G.visitedDistricts, patch.progress.visitedDistricts);
+            if (patch.progress.metCitizens) Object.assign(G.metCitizens, patch.progress.metCitizens);
+            if (patch.progress.stats) Object.assign(G.stats, patch.progress.stats);
+            if (patch.progress.flags) Object.assign(G.flags, patch.progress.flags);
+        });
     },
 
     save() {
-        try {
-            localStorage.setItem(SAVE_KEY, JSON.stringify({
+        CityStore.patch({
+            progress: {
                 achievements: G.achievements,
                 visitedDistricts: G.visitedDistricts,
                 metCitizens: G.metCitizens,
                 stats: G.stats,
-                settings: G.settings,
-                quality: G.quality
-            }));
-        } catch (e) { /* storage full/blocked — non-fatal */ }
+                flags: G.flags
+            },
+            settings: G.settings,
+            quality: G.quality
+        });
+        CityStore.saveProgress();
     },
 
     unlock(key) {
@@ -132,3 +142,5 @@ export const Progress = {
         }
     }
 };
+
+

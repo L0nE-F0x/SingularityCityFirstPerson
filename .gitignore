@@ -25,3 +25,7 @@ tests/chrome*/
 __pycache__/
 *.pyc
 .venv/
+
+node_modules/
+pixi/node_modules/
+

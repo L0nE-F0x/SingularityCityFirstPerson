@@ -136,6 +136,65 @@ export const City = {
         return this.districts;
     },
 
+    // ── derived street geometry (pure — no renderer) ────────────────────────
+    // Kerb segments for every road, broken around the carriageways that cross
+    // it, so a raised sidewalk never runs across an intersecting street's
+    // tarmac (the "sidewalks in the middle of the road" junction bug). Because
+    // each surviving segment starts exactly at the crossing carriageway's edge,
+    // the parallel road's kerb fills the corner and the junction closes cleanly.
+    // Returned as {x, z, w, d} boxes; world.js renders them, street_check.mjs
+    // asserts none overlaps a carriageway.
+    sidewalkSegments() {
+        const out = [];
+        const verticals = this.roads.filter(r => r.vertical);
+        const horizontals = this.roads.filter(r => !r.vertical);
+        for (const r of this.roads) {
+            if (r.sidewalk <= 0) continue;
+            const off = r.carriage / 2 + r.sidewalk / 2;
+            const len = r.vertical ? r.d : r.w;          // extent along r's length axis
+            const c0 = r.vertical ? r.z : r.x;
+            const start = c0 - len / 2, end = c0 + len / 2;
+            const perps = r.vertical ? horizontals : verticals;
+            const gaps = [];
+            for (const p of perps) {
+                if (p === r) continue;
+                const perpPos = r.vertical ? p.x : p.z;             // p's centre on r's cross axis
+                const perpHalf = (r.vertical ? p.w : p.d) / 2;      // …and half-span there
+                if (Math.abs((r.vertical ? r.x : r.z) - perpPos) > perpHalf) continue;
+                const at = r.vertical ? p.z : p.x;                  // p's position along r's length axis
+                if (at < start - 1 || at > end + 1) continue;
+                gaps.push([at - p.carriage / 2, at + p.carriage / 2]);
+            }
+            gaps.sort((a, b) => a[0] - b[0]);
+            let cur = start;
+            const segs = [];
+            for (const [g0, g1] of gaps) {
+                if (g0 > cur) segs.push([cur, Math.min(g0, end)]);
+                cur = Math.max(cur, g1);
+            }
+            if (cur < end) segs.push([cur, end]);
+            for (const side of [-1, 1]) {
+                for (const [s0, s1] of segs) {
+                    const segLen = s1 - s0;
+                    if (segLen < 2) continue;
+                    const mid = (s0 + s1) / 2;
+                    out.push(r.vertical
+                        ? { x: r.x + side * off, z: mid, w: r.sidewalk, d: segLen }
+                        : { x: mid, z: r.z + side * off, w: segLen, d: r.sidewalk });
+                }
+            }
+        }
+        return out;
+    },
+
+    // Signalled junctions: every avenue × street crossing (where the player
+    // actually walks and drives). Ring / inner-district crossings stay clear.
+    junctions() {
+        const out = [];
+        for (const x of this.avenueXs) for (const z of this.streetZs) out.push({ x, z });
+        return out;
+    },
+
     // Nearest road intersection to a world point (for citizen routing)
     nearestIntersection(x, z) {
         let bx = this.avenueXs[0] ?? this.ringX[0];

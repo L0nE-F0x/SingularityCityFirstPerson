@@ -1,0 +1,964 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- Warm up DNS+TLS to every third-party origin the first paint depends on -->
+<link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="preconnect" href="https://uojpqygjbxranpdvkwwz.supabase.co" crossorigin>
+<title>Singularity City</title>
+<meta name="description" content="A globally synced, real-time simulation of the AI frontier. 900+ AI models as pixel citizens across lab HQs, a GPU supply-chain port, data centers, an agent district, alignment forest, embassy row, robotics factory, longevity wing, space launch pads, a hidden black market, and a live Global AI Index.">
+
+<meta property="og:title" content="Singularity City — The AI industry, alive in your browser">
+<meta property="og:description" content="900+ AI models as pixel citizens across a living metropolis: lab HQs, a GPU supply-chain port with rippling harbor water, data centers, an agent district, alignment forest, embassy row, robotics factory, longevity wing, 13 space launch pads, a hidden black market, VC Row deal flow, and a live Global AI Index — all synced to real-time AI-industry data.">
+<meta property="og:type" content="website">
+<meta property="og:image" content="https://singularitycity.net/og-image.png?v=524">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:url" content="https://singularitycity.net">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Singularity City — The AI industry, alive in your browser">
+<meta name="twitter:description" content="900+ AI models as pixel citizens. Lab HQs, GPU supply-chain port, agent district, alignment forest, embassy row, robotics factory, longevity wing, space launch pads, hidden black market, Global AI Index &amp; VC deal flow — synced to real-time AI-industry data.">
+<meta name="twitter:image" content="https://singularitycity.net/og-image.png?v=524">
+
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#060610">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="screen-orientation" content="landscape">
+
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Silkscreen:wght@400;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css?v=532">
+<link rel="stylesheet" href="css/terminal.css?v=532">
+
+<!-- ═══ GLOBAL ERROR HANDLER (catch crashes before they white-screen) ═══ -->
+<script>
+window.onerror = function(msg, src, line, col, err) {
+    var el = document.getElementById('sc-error-toast');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'sc-error-toast';
+        el.style.cssText = 'position:fixed;bottom:12px;left:12px;max-width:420px;padding:10px 14px;background:rgba(15,10,25,0.92);border:1px solid rgba(239,68,68,0.4);border-radius:8px;color:#f87171;font:11px/1.5 "JetBrains Mono",monospace;z-index:99999;pointer-events:none;opacity:0;transition:opacity .3s';
+        document.body.appendChild(el);
+    }
+    el.textContent = 'Something went wrong. Refresh if the city freezes.';
+    el.style.opacity = '1';
+    setTimeout(function() { el.style.opacity = '0'; }, 8000);
+    return false; /* let error still log to console */
+};
+window.onunhandledrejection = function(e) {
+    if (e.reason && e.reason.message && e.reason.message.includes('Extension context')) return;
+    window.onerror(e.reason ? e.reason.message : 'Promise rejected', '', 0, 0, e.reason);
+};
+</script>
+
+<!-- ═══ EMBED MODE (Phase 3b) ═══
+     ?embed=1 → iframe-friendly chrome-less view with auto-boot + auto-tour.
+     Lets creators drop Singularity City into blog posts, tweets, Notion pages, etc. -->
+<script>
+(function(){
+    try {
+        var p = new URLSearchParams(window.location.search);
+        if (p.get('embed') === '1' || p.get('embed') === 'true') {
+            window.SC_EMBED = true;
+            document.documentElement.classList.add('embed-mode');
+        }
+    } catch(e) {}
+})();
+</script>
+<style>
+/* Embed mode: strip chrome so the city fills the iframe. */
+html.embed-mode, html.embed-mode body { margin: 0; padding: 0; overflow: hidden; background: #060610; }
+html.embed-mode #landing,
+html.embed-mode #installBanner,
+html.embed-mode #instrOv,
+html.embed-mode #orientationOverlay,
+html.embed-mode .top,
+html.embed-mode #minimap { display: none !important; }
+html.embed-mode #gameWrap { display: block !important; }
+html.embed-mode .vp, html.embed-mode #viewport { top: 0 !important; height: 100vh !important; }
+html.embed-mode .tick { bottom: 0 !important; }
+/* Subtle "Open full city" badge in the top-right so embedders still credit/link through. */
+html.embed-mode #embedBadge {
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    z-index: 9999;
+    padding: 6px 10px;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 9px;
+    color: #22d3ee;
+    background: rgba(6, 6, 16, 0.72);
+    border: 1px solid rgba(34, 211, 238, 0.45);
+    border-radius: 4px;
+    text-decoration: none;
+    text-shadow: 0 0 6px rgba(34, 211, 238, 0.65);
+    box-shadow: 0 0 10px rgba(34, 211, 238, 0.25);
+    transition: all 0.2s ease;
+}
+html.embed-mode #embedBadge:hover {
+    background: rgba(34, 211, 238, 0.15);
+    box-shadow: 0 0 16px rgba(34, 211, 238, 0.55);
+}
+html:not(.embed-mode) #embedBadge { display: none; }
+
+/* ═══ LOADING SCREEN — boot-sequence aesthetic ═══ */
+#sc-loader {
+    position: fixed; inset: 0; z-index: 99998;
+    background: #040410;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 1; transition: opacity 0.6s ease;
+    pointer-events: none;
+    overflow: hidden;
+    font-family: 'JetBrains Mono', monospace;
+}
+#sc-loader.hidden { opacity: 0; }
+
+/* Ambient background layers — pure CSS */
+.sc-loader-bg {
+    position: absolute; inset: 0; z-index: 0;
+    pointer-events: none;
+}
+.sc-loader-grid {
+    position: absolute; inset: -2px;
+    background-image:
+        linear-gradient(rgba(34,211,238,0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(34,211,238,0.045) 1px, transparent 1px);
+    background-size: 48px 48px;
+    animation: scLoaderGridDrift 24s linear infinite;
+    mask-image: radial-gradient(ellipse 90% 70% at 50% 55%, #000 0%, #000 55%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 55%, #000 0%, #000 55%, transparent 100%);
+}
+@keyframes scLoaderGridDrift {
+    0%   { background-position: 0 0, 0 0; }
+    100% { background-position: 48px 48px, 48px 48px; }
+}
+.sc-loader-glow {
+    position: absolute; inset: 0;
+    background:
+        radial-gradient(ellipse 60% 45% at 50% 55%, rgba(34,211,238,0.11), transparent 70%),
+        radial-gradient(ellipse 40% 30% at 30% 40%, rgba(251,191,36,0.05), transparent 70%),
+        radial-gradient(ellipse 45% 35% at 75% 60%, rgba(139,92,246,0.06), transparent 70%);
+    animation: scLoaderGlowBreathe 6s ease-in-out infinite alternate;
+}
+@keyframes scLoaderGlowBreathe {
+    0%   { opacity: 0.6; transform: scale(1); }
+    100% { opacity: 1;   transform: scale(1.05); }
+}
+.sc-loader-scan {
+    position: absolute; inset: 0;
+    background: linear-gradient(180deg,
+        transparent 0%,
+        transparent 49%,
+        rgba(34,211,238,0.08) 50%,
+        transparent 51%,
+        transparent 100%);
+    background-size: 100% 200%;
+    animation: scLoaderScan 8s linear infinite;
+    pointer-events: none;
+    opacity: 0.6;
+}
+@keyframes scLoaderScan {
+    0%   { background-position: 0 -100%; }
+    100% { background-position: 0 100%; }
+}
+.sc-loader-vignette {
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse 85% 75% at 50% 50%, transparent 0%, transparent 50%, rgba(4,4,16,0.85) 100%);
+}
+
+/* Centre frame with cyan corner brackets — HUD targeting feel */
+.sc-loader-frame {
+    position: relative;
+    z-index: 1;
+    width: clamp(320px, 44vw, 520px);
+    padding: 34px 36px 28px;
+    background: linear-gradient(180deg, rgba(10,10,26,0.72), rgba(6,6,18,0.82));
+    border: 1px solid rgba(34,211,238,0.18);
+    box-shadow:
+        0 0 0 1px rgba(34,211,238,0.05) inset,
+        0 20px 60px -10px rgba(0,0,0,0.8),
+        0 0 40px rgba(34,211,238,0.07);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+    animation: scLoaderFrameIn 0.6s ease-out;
+}
+@keyframes scLoaderFrameIn {
+    0%   { opacity: 0; transform: translateY(8px) scale(0.98); }
+    100% { opacity: 1; transform: none; }
+}
+.sc-corner {
+    position: absolute;
+    width: 16px; height: 16px;
+    border-color: #22d3ee;
+    border-style: solid;
+    border-width: 0;
+    filter: drop-shadow(0 0 4px rgba(34,211,238,0.6));
+}
+.sc-corner.tl { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.sc-corner.tr { top: -1px; right: -1px; border-top-width: 2px; border-right-width: 2px; }
+.sc-corner.bl { bottom: -1px; left: -1px; border-bottom-width: 2px; border-left-width: 2px; }
+.sc-corner.br { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
+
+/* Header area: small badge, big title, tagline */
+.sc-loader-header {
+    text-align: center;
+    margin-bottom: 24px;
+}
+.sc-loader-badge {
+    display: inline-block;
+    font-size: 9px;
+    letter-spacing: 2.5px;
+    color: #fbbf24;
+    padding: 3px 10px;
+    border: 1px solid rgba(251,191,36,0.45);
+    background: rgba(251,191,36,0.05);
+    border-radius: 2px;
+    margin-bottom: 16px;
+    font-weight: 700;
+}
+.sc-loader-title {
+    font: 700 clamp(18px, 2.4vw, 26px) 'Silkscreen', monospace;
+    color: #e8e8f0;
+    letter-spacing: clamp(4px, 0.6vw, 8px);
+    margin-bottom: 8px;
+    text-shadow: 0 0 18px rgba(34,211,238,0.35), 0 0 3px rgba(255,255,255,0.3);
+    animation: scLoaderTitleFlicker 5s ease-in-out infinite;
+}
+@keyframes scLoaderTitleFlicker {
+    0%, 92%, 100% { opacity: 1; }
+    93%, 95%      { opacity: 0.7; }
+    94%           { opacity: 0.95; }
+}
+.sc-loader-sub {
+    font-size: 9px;
+    letter-spacing: 3px;
+    color: #8a8aa0;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+/* Progress: segmented bar + % readout */
+.sc-loader-progress {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 22px;
+}
+.sc-loader-bar-track {
+    flex: 1;
+    position: relative;
+    height: 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(34,211,238,0.15);
+    border-radius: 2px;
+    overflow: hidden;
+}
+.sc-loader-bar-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #22d3ee 0%, #34d399 55%, #fbbf24 100%);
+    box-shadow: 0 0 10px rgba(34,211,238,0.6);
+    transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+}
+.sc-loader-bar-fill::after {
+    /* inner segmented tick marks for dashboard feel */
+    content: '';
+    position: absolute; inset: 0;
+    background-image: linear-gradient(90deg,
+        transparent 0, transparent calc(10% - 1px),
+        rgba(0,0,0,0.35) calc(10% - 1px), rgba(0,0,0,0.35) 10%);
+    background-size: 10% 100%;
+}
+.sc-loader-bar-shine {
+    position: absolute; top: 0; bottom: 0; left: 0;
+    width: 30%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+    animation: scLoaderShine 1.8s ease-in-out infinite;
+}
+@keyframes scLoaderShine {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(400%); }
+}
+.sc-loader-pct {
+    font-size: 11px;
+    font-weight: 700;
+    color: #22d3ee;
+    font-variant-numeric: tabular-nums;
+    min-width: 38px;
+    text-align: right;
+    text-shadow: 0 0 6px rgba(34,211,238,0.55);
+}
+
+/* Task checklist */
+.sc-loader-tasks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 18px;
+    margin-bottom: 20px;
+}
+.sc-task {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 9px;
+    letter-spacing: 1.2px;
+    color: #4a4a5c;
+    padding: 3px 0;
+    transition: color 0.3s ease;
+}
+.sc-task-icon {
+    width: 10px; height: 10px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 9px;
+    color: inherit;
+    transition: color 0.3s ease, transform 0.3s ease;
+}
+.sc-task-running {
+    color: #fbbf24;
+    text-shadow: 0 0 4px rgba(251,191,36,0.4);
+}
+.sc-task-running .sc-task-icon {
+    color: #fbbf24;
+    animation: scLoaderTaskPulse 1s ease-in-out infinite;
+}
+@keyframes scLoaderTaskPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.4; transform: scale(0.85); }
+}
+.sc-task-done {
+    color: #34d399;
+}
+.sc-task-done .sc-task-icon {
+    color: #34d399;
+}
+
+/* Footer: status line with pulsing dot */
+.sc-loader-foot {
+    display: flex; align-items: center; gap: 8px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(34,211,238,0.1);
+    font-size: 9px;
+    color: #6a6a80;
+    letter-spacing: 1px;
+}
+.sc-foot-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #22d3ee;
+    box-shadow: 0 0 6px #22d3ee;
+    animation: scLoaderTaskPulse 1.3s ease-in-out infinite;
+    flex-shrink: 0;
+}
+.sc-foot-status {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.sc-foot-meta {
+    color: #4a4a5c;
+    font-size: 8px;
+    letter-spacing: 1.5px;
+    flex-shrink: 0;
+}
+
+/* Mobile tightening */
+@media (max-width: 600px) {
+    .sc-loader-frame { padding: 24px 20px 18px; width: 86vw; }
+    .sc-loader-tasks { grid-template-columns: 1fr; gap: 3px; }
+    .sc-loader-badge { margin-bottom: 10px; }
+    .sc-loader-header { margin-bottom: 16px; }
+}
+
+/* ═══ TERMINAL-MODE LOADER THEMING ═══ */
+/* When the user clicks "Open the Terminal" we recolor the loader amber to match
+   the Bloomberg-style terminal aesthetic instead of the city's cyan. */
+#sc-loader.sc-loader-terminal .sc-loader-grid {
+    background-image:
+        linear-gradient(rgba(251,191,36,0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(251,191,36,0.045) 1px, transparent 1px);
+}
+#sc-loader.sc-loader-terminal .sc-loader-glow {
+    background:
+        radial-gradient(ellipse 60% 45% at 50% 55%, rgba(251,191,36,0.12), transparent 70%),
+        radial-gradient(ellipse 40% 30% at 30% 40%, rgba(34,211,238,0.04), transparent 70%),
+        radial-gradient(ellipse 45% 35% at 75% 60%, rgba(251,191,36,0.06), transparent 70%);
+}
+#sc-loader.sc-loader-terminal .sc-loader-scan {
+    background: linear-gradient(180deg,
+        transparent 0%, transparent 49%,
+        rgba(251,191,36,0.09) 50%,
+        transparent 51%, transparent 100%);
+    background-size: 100% 200%;
+}
+#sc-loader.sc-loader-terminal .sc-loader-frame {
+    border-color: rgba(251,191,36,0.22);
+    box-shadow:
+        0 0 0 1px rgba(251,191,36,0.05) inset,
+        0 20px 60px -10px rgba(0,0,0,0.8),
+        0 0 40px rgba(251,191,36,0.09);
+}
+#sc-loader.sc-loader-terminal .sc-corner {
+    border-color: #fbbf24;
+    filter: drop-shadow(0 0 4px rgba(251,191,36,0.65));
+}
+#sc-loader.sc-loader-terminal .sc-loader-title {
+    text-shadow: 0 0 18px rgba(251,191,36,0.4), 0 0 3px rgba(255,255,255,0.28);
+}
+#sc-loader.sc-loader-terminal .sc-loader-bar-track {
+    border-color: rgba(251,191,36,0.2);
+}
+#sc-loader.sc-loader-terminal .sc-loader-bar-fill {
+    background: linear-gradient(90deg, #fbbf24 0%, #f59e0b 55%, #22d3ee 100%);
+    box-shadow: 0 0 10px rgba(251,191,36,0.6);
+}
+#sc-loader.sc-loader-terminal .sc-loader-pct {
+    color: #fbbf24;
+    text-shadow: 0 0 6px rgba(251,191,36,0.55);
+}
+#sc-loader.sc-loader-terminal .sc-foot-dot {
+    background: #fbbf24;
+    box-shadow: 0 0 6px #fbbf24;
+}
+#sc-loader.sc-loader-terminal .sc-loader-foot {
+    border-top-color: rgba(251,191,36,0.12);
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ LOADING SCREEN (shown between landing exit and city ready) ═══ -->
+<div id="sc-loader" style="display:none">
+    <div class="sc-loader-bg">
+        <div class="sc-loader-grid"></div>
+        <div class="sc-loader-glow"></div>
+        <div class="sc-loader-scan"></div>
+        <div class="sc-loader-vignette"></div>
+    </div>
+    <div class="sc-loader-frame">
+        <span class="sc-corner tl"></span>
+        <span class="sc-corner tr"></span>
+        <span class="sc-corner bl"></span>
+        <span class="sc-corner br"></span>
+        <div class="sc-loader-header">
+            <div class="sc-loader-badge" id="sc-loader-badge">SYSTEM BOOT</div>
+            <div class="sc-loader-title" id="sc-loader-title">SINGULARITY CITY</div>
+            <div class="sc-loader-sub" id="sc-loader-sub">REAL-TIME AI INDUSTRY SIMULATION</div>
+        </div>
+        <div class="sc-loader-progress">
+            <div class="sc-loader-bar-track">
+                <div class="sc-loader-bar-fill" id="sc-loader-fill"></div>
+                <div class="sc-loader-bar-shine"></div>
+            </div>
+            <div class="sc-loader-pct" id="sc-loader-pct">0%</div>
+        </div>
+        <div class="sc-loader-tasks" id="sc-loader-tasks">
+            <div class="sc-task" data-task="net"><span class="sc-task-icon">○</span><span class="sc-task-lbl">CONNECT CLOUD</span></div>
+            <div class="sc-task" data-task="layout"><span class="sc-task-icon">○</span><span class="sc-task-lbl">BUILD CITY LAYOUT</span></div>
+            <div class="sc-task" data-task="engine"><span class="sc-task-icon">○</span><span class="sc-task-lbl">INIT SIM ENGINE</span></div>
+            <div class="sc-task" data-task="holomap"><span class="sc-task-icon">○</span><span class="sc-task-lbl">LOAD 3D HOLOMAP</span></div>
+            <div class="sc-task" data-task="models"><span class="sc-task-icon">○</span><span class="sc-task-lbl">FETCH AI MODELS</span></div>
+            <div class="sc-task" data-task="render"><span class="sc-task-icon">○</span><span class="sc-task-lbl">RENDER CITY</span></div>
+        </div>
+        <div class="sc-loader-foot">
+            <span class="sc-foot-dot"></span>
+            <span class="sc-foot-status" id="sc-loader-status">Initializing…</span>
+            <span class="sc-foot-meta">NODE 01</span>
+        </div>
+    </div>
+</div>
+<div id="landing">
+  <div class="land-bg"><div class="land-glow g1"></div><div class="land-glow g2"></div><div class="land-glow g3"></div><div id="landStars"></div><div class="land-skyline" id="landSkyline"></div></div>
+  <div class="land-content">
+    <img class="land-banner" src="banner.webp?v=511" alt="Singularity City — The entire AI industry, alive in your browser" width="1840" height="528">
+    <div class="land-features">
+      <div class="land-feat" data-tip="960+ AI citizens with daily routines"><span>🏢</span><b>Living City</b></div>
+      <div class="land-feat" data-tip="17+ real-world data centers &amp; chip fabs"><span>🖥️</span><b>Compute District</b></div>
+      <div class="land-feat" data-tip="Three.js galaxy with lit star rendering"><span>🌌</span><b>3D Holomap</b></div>
+      <div class="land-feat" data-tip="Live rocket launches from the desert"><span>🚀</span><b>Space Zone</b></div>
+      <div class="land-feat" data-tip="7 mansion styles + helicopter flyovers"><span>🏛️</span><b>CEO Estates</b></div>
+      <div class="land-feat" data-tip="Benchmarks, pricing &amp; arena rankings"><span>📊</span><b>Live Data</b></div>
+      <div class="land-feat" data-tip="Cargo ships, commodities &amp; underwater reef"><span>🚢</span><b>Port District</b></div>
+      <div class="land-feat" data-tip="5 power sources with real supply &amp; demand"><span>⚡</span><b>Power Grid</b></div>
+      <div class="land-feat" data-tip="Venture capital firms, deal tickers &amp; car commuters"><span>💰</span><b>VC Row</b></div>
+      <div class="land-feat" data-tip="See other visitors as ghost cursors in real time"><span>👥</span><b>Multiplayer</b></div>
+      <div class="land-feat" data-tip="Each model has unique traits &amp; behaviors"><span>🧠</span><b>Personalities</b></div>
+      <div class="land-feat" data-tip="Zone-aware ambient audio &amp; sound effects"><span>🔊</span><b>Soundscape</b></div>
+      <div class="land-feat" data-tip="Dozens of worker NPCs with commuter routines"><span>🏠</span><b>NPC Housing</b></div>
+      <div class="land-feat" data-tip="Bar interior with karaoke &amp; VIP lounge"><span>🍸</span><b>Neon Nightlife</b></div>
+      <div class="land-feat" data-tip="Academy, library, dorms &amp; research lab"><span>🎓</span><b>University Campus</b></div>
+      <div class="land-feat" data-tip="Senate hearings &amp; regulation debates"><span>🏛️</span><b>AI Court</b></div>
+      <div class="land-feat" data-tip="NeurIPS, ICML &amp; live poster sessions"><span>📝</span><b>Conference Center</b></div>
+      <div class="land-feat" data-tip="Global &amp; regional holidays — Diwali, Holi, Ramadan, Nyepi &amp; more"><span>🎄</span><b>Seasonal Events</b></div>
+      <div class="land-feat" data-tip="Rare celestial events on clear nights"><span>🌌</span><b>Aurora &amp; Comets</b></div>
+      <div class="land-feat" data-tip="Food carts &amp; golden hour lighting"><span>🍜</span><b>Street Vendors</b></div>
+      <div class="land-feat" data-tip="3D Three.js Earth with real satellite orbits"><span>🛰️</span><b>Orbit Mode</b></div>
+      <div class="land-feat" data-tip="Assembly lines, walking robots &amp; welding sparks"><span>🤖</span><b>Robotics Factory</b></div>
+      <div class="land-feat" data-tip="AI drug discovery, DNA helix &amp; cryonics vault"><span>🧬</span><b>Longevity Wing</b></div>
+      <div class="land-feat" data-tip="Autonomous AI agent frameworks &amp; orchestration"><span>🤖</span><b>Agent District</b></div>
+      <div class="land-feat" data-tip="Data spine overlay with building wireframes"><span>🔬</span><b>X-Ray Mode</b></div>
+      <div class="land-feat" data-tip="The Singularity City Times with live front page &amp; PDF"><span>📰</span><b>Weekly Newspaper</b></div>
+      <div class="land-feat" data-tip="Hands-free camera tour through 9 city landmarks"><span>🎬</span><b>Auto-Tour Mode</b></div>
+      <div class="land-feat" data-tip="Drop the live city into any blog post or tweet"><span>🖼️</span><b>Embeddable</b></div>
+      <div class="land-feat" data-tip="Archetypes: gym rats, foodies, night owls &amp; more"><span>🎯</span><b>Goal NPCs</b></div>
+      <div class="land-feat" data-tip="Fountain, trees, benches, pond &amp; flower beds"><span>🌳</span><b>Central Park</b></div>
+      <div class="land-feat" data-tip="10 weather states &amp; climate zones matched to your timezone"><span>🌦️</span><b>Dynamic Weather</b></div>
+      <div class="land-feat" data-tip="Live composite 0-1000 score billboard"><span>📈</span><b>Global AI Index</b></div>
+      <div class="land-feat" data-tip="GPU shipments from port to data centers"><span>🚚</span><b>Supply Chain</b></div>
+      <div class="land-feat" data-tip="Animated funding rounds with money particles"><span>💼</span><b>VC Deal Flow</b></div>
+      <div class="land-feat" data-tip="Hidden underground for jailbroken models"><span>🕶️</span><b>Black Market</b></div>
+      <div class="land-feat" data-tip="Baby, kid, adult &amp; senior visual stages"><span>👶</span><b>NPC Aging</b></div>
+    </div>
+    <div class="land-btns">
+      <button class="land-enter" onclick="enterCity()">▶ Enter Singularity City</button>
+      <button class="land-terminal" onclick="enterTerminal()" title="Professional data dashboard — no pixel art, all numbers">⟫ Open the Terminal</button>
+      <button class="land-how" onclick="document.getElementById('instrOv').classList.add('open')">❓ How It Works</button>
+    </div>
+    <div id="mobileWarning" style="display:none;margin-top:12px;padding:8px 14px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.25);border-radius:6px;font-size:10px;color:#fbbf24;line-height:1.5">
+      📱 <b>Mobile detected.</b> Touch controls: swipe to pan, pinch to zoom, tap for profiles.
+    </div>
+  </div>
+</div>
+
+<!-- ─── PWA INSTALL BANNER (mobile only) ─── -->
+<div id="installBanner" class="install-banner" style="display:none">
+  <div class="install-banner-inner">
+    <div class="install-icon">🏙️</div>
+    <div class="install-text">
+      <b>Download Singularity City</b>
+      <span>Install for the full experience — offline support, fullscreen &amp; faster loads</span>
+    </div>
+    <div class="install-actions">
+      <button id="installBtn" class="install-accept">Install</button>
+      <button id="installDismiss" class="install-dismiss">Not now</button>
+    </div>
+  </div>
+</div>
+
+<!-- ─── ORIENTATION OVERLAY (portrait blocker) ─── -->
+<div id="orientationOverlay" class="orient-ov" style="display:none">
+  <div class="orient-content">
+    <div class="orient-phone">
+      <div class="orient-phone-inner">
+        <div class="orient-arrow">↺</div>
+      </div>
+    </div>
+    <div class="orient-msg">Rotate your device to landscape</div>
+    <div class="orient-sub">Singularity City works best in horizontal mode</div>
+  </div>
+</div>
+
+<div id="instrOv" class="ov" onclick="if(event.target===this)this.classList.remove('open')">
+  <div class="instr-pan">
+    <button class="instr-close" onclick="document.getElementById('instrOv').classList.remove('open')">✕</button>
+    <div class="instr-title">HOW IT WORKS</div>
+
+    <div class="instr-tutorial-cta">
+      <div class="instr-tut-title">▶ NEW HERE? TAKE THE INTERACTIVE TOUR</div>
+      <div class="instr-tut-sub">A guided walkthrough of every feature — the city, zones, view modes, scanning, controls, and more. Skip anytime.</div>
+      <button class="instr-tut-btn" onclick="document.getElementById('instrOv').classList.remove('open');if(typeof Tutorial!=='undefined')Tutorial.start();">▶ START INTERACTIVE TUTORIAL</button>
+    </div>
+
+    <div class="instr-section"><div class="instr-h">🏙️ The City</div><div class="instr-p">A <b>GPU-accelerated real-time simulation</b> of the AI industry. Buildings grow taller as labs release more models. New labs get dynamically zoned with HQs. The lab with the highest ELO gets a <b>golden Apex Beacon</b>. The cheapest API provider gets a green <b>SALE</b> sign. A <b>Leaderboard Monument</b> in the park tracks the #1 model. AI models walk the streets as <b>living entities</b> — they age (baby → kid → adult → retired), commute, eat, sleep, and have unique appearances based on their parameter count and architecture (MoE, dense, etc.).</div></div>
+
+    <div class="instr-section"><div class="instr-h">🌍 Map Layout (left → right)</div><div class="instr-p">🚢 Port District → 🏜️ Space Zone → 🌲 Frontier Pines → 🏠 Worker Housing → 🖥️ Compute District → 🏠 Residential → 🎓 University → 🌲 Pine Reserve → 🏛️ AI Court → 🏢 Tech District → 📝 Conference → 🚇 Metro East → 🍸 Neon Bar → 🌐 The Backbone → 🤖 Robotics Factory → 🧬 Longevity Wing → 🤖 Agent District → 🌲 Silicon Woods → 💰 VC Row → 🏡 Billionaire's Row → ⚡ Power Grid</div></div>
+
+    <div class="instr-section"><div class="instr-h">🛰️ Scanning & Discovery</div><div class="instr-p">The AI-powered scanner finds <b>4 real models per scan</b> using your API key. It uses <b>weighted category selection</b> (Big Tech 40%, Asian 15%, Open Source 15%) and <b>gap analysis</b> to prioritize underrepresented labs. It also discovers <b>CEOs/founders</b> for labs that don't have one yet, automatically creating their car, helicopter, and estate.</div></div>
+
+    <div class="instr-section"><div class="instr-h">📡 Camera Tracking</div><div class="instr-p">Click any AI model or CEO and press <b>📡 Track</b> to lock the camera on them. Watch them commute via metro, enter buildings, work at desks, go camping, or fly helicopters — the camera <b>automatically enters and exits interiors</b> to follow them. Drag to cancel.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🌌 3D Holomap</div><div class="instr-p">Click <b>🌍 Holomap</b> to launch a full <b>Three.js 3D galaxy</b> where the entire AI industry orbits a central ASI singularity. Each lab is a <b>glowing nebula</b> — the biggest labs (OpenAI, Google, Anthropic) orbit closest to the black hole. Every AI model is a <b>star</b> inside its lab's cluster, sized by benchmarks. <b>Orbit, zoom, and click</b> any star for full stats.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🛰️ Orbit Mode</div><div class="instr-p">Pull the camera up past the sky boundary or click the <b>🛰️ Orbit</b> button in the minimap to enter Low Earth Orbit. See the Earth's curvature with atmosphere glow, city lights on the dark side, and <b>real satellite positions</b> from CelesTrak — Starlink, OneWeb, ISS, GPS, and Galileo constellations.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🚀 Space Zone</div><div class="instr-p">Scroll left past the worker housing to find the <b>desert biome</b> with 13 launch pads (SpaceX, Blue Origin, NASA, CNSA, ESA, ULA, Rocket Lab, ISRO, JAXA, Roscosmos and more), a Vehicle Assembly Building, Mission Control, and an Orbital Tracking Station. Rockets launch based on <b>real-time launch data</b> from the Launch Library 2 API.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🤖 Robotics Factory</div><div class="instr-p">The <b>Physical AI Manufacturing District</b> features 4 buildings: Assembly Line, Testing Ground, Deployment Dock, and R&amp;D Lab. Watch walking robot prototypes, welding sparks, conveyor belts, and smoke puffs. Companies: Tesla Optimus, Figure, Boston Dynamics, Unitree, Agility, and more.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🧬 Longevity Research Wing</div><div class="instr-p">AI-powered <b>drug discovery and life extension</b>. 4 buildings: Drug Discovery Lab, Clinical Trials Center, Genomics Sequencing, and Cryonics Vault. Animated DNA double helix, molecule bubbles, heartbeat pulses, sequencer LEDs, and cryo vapor. Companies: Calico, Altos Labs, Insilico Medicine, Isomorphic Labs.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🤖 Agent District</div><div class="instr-p">The <b>autonomous AI agent neighborhood</b> — home to the next wave of AI: agentic systems that perform multi-step tasks. Browser agents, coding agents, research agents, and computer-use agents work in dedicated towers. Watch them spawn task threads in real time.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🌲 Alignment Forest</div><div class="instr-p">A quiet grove of <b>AI safety & alignment</b> research orgs — Redwood Research, Apollo Research, METR, MIRI, and the FAR AI lab. Each studies interpretability, evals, and controlling frontier models. Step inside for whiteboards of alignment research and red-team dashboards.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🏛️ Embassy Row</div><div class="instr-p">The <b>AI diplomacy quarter</b> — national embassies (US, EU, UK, China, India, UAE) that track each country's AI policy, compute, and export-control stance, each with an ambassador's residence in its own architectural style. Where the <b>global AI governance</b> story plays out.</div></div>
+
+    <div class="instr-section"><div class="instr-h">⚡ Energy Grid</div><div class="instr-p">The <b>power behind the compute</b> — real 2026 AI-energy deals rendered as facilities: solar + storage, wind, nuclear (SMR + fusion pilots), gas, and hydro. Watch fusion reactors pulse and turbines spin. AI's exploding electricity demand made visible.</div></div>
+
+    <div class="instr-section"><div class="instr-h">⚓ Trade Port</div><div class="instr-p">The <b>chip-war waterfront</b> — cargo ships haul real commodities (EUV machines, HBM stacks, GPU racks) past an Export Control Office. Rippling harbor water, cranes loading containers, and a $380M ASML crate under armed escort. The physical supply chain of AI.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🕸️ Network Backbone</div><div class="instr-p">The <b>internet's plumbing</b> — an Internet Exchange, landing stations for subsea cables, CDN edge nodes, and a Network Operations Center. Fiber-optic pulses race along the underground trunk lines that carry every token between labs and users.</div></div>
+
+    <div class="instr-section"><div class="instr-h">⚖️ AI Court & Academy</div><div class="instr-p">The <b>AI Court</b> hears landmark cases — copyright, liability, and the models on trial — with a Senate chamber for AI legislation. Nearby, the <b>AI Academy</b> trains the next generation: lecture halls, a library, research labs, and dorms full of student models.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🧑‍💼 CEOs & Billionaire's Row</div><div class="instr-p">Each AI lab's CEO drives a <b>luxury car</b> between their HQ and private estate. On weekends, CEOs take <b>helicopters</b> to Silicon Woods — a luxury retreat with a whiskey bar, infinity hot tub, putting green, and glamping domes. New CEOs are auto-discovered via scan and get a mansion built on Billionaire's Row.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🌲 Forests & Wild Spaces</div><div class="instr-p"><b>Pine Reserve</b> (near residential) — AI models go camping, fishing, and picnicking on weekends. <b>Silicon Woods</b> — A billionaire CEO retreat with fire pits, zen gardens, and fairy-lit redwoods. <b>Frontier Pines</b> — separates the space zone from the city. All feature outdoor sky rendering matching the time of day.</div></div>
+
+    <div class="instr-section"><div class="instr-h">🔬 X-Ray Mode</div><div class="instr-p">Click the <b>🔬 X-Ray</b> button to toggle a diagnostic overlay. The city dims to reveal <b>building wireframes</b> with lab-colored outlines, ID labels, stat metadata, data flow packets traveling along connection arcs, a coordinate grid, and a sweeping scan line. A dark terminal/hacker aesthetic for data nerds.</div></div>
+
+    <div class="instr-section"><div class="instr-h">📊 Dashboards & Tools</div><div class="instr-p">The top bar gives you <b>📊 Bench</b> (full leaderboard), <b>👥 Census</b> (every citizen), <b>🚀 Launches</b> (rocket schedule), <b>🧬 Lineage</b> (model family trees), <b>📰 News</b> (AI headlines), <b>📅 Cal</b> (event calendar), <b>🏭 Hardware</b> (compute clusters), <b>⚡ Grid</b> (power status), <b>💰 Costs</b> (pricing dashboard), <b>🤖 Analyst</b> (ask AI questions about the city), and <b>📜 Quests</b> (quest log &amp; achievements).</div></div>
+
+    <div class="instr-section">
+      <div class="instr-h">🔑 API Keys</div>
+      <div class="instr-p">
+        Provide your own API keys in Settings (⚙️) to power scanning, the AI analyst, and live market data.<br><br>
+        <b style="color:var(--ac)">AI Model Key (for Scan & Analyst)</b><br>
+        • <b>Google Gemini:</b> <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:var(--cy)">aistudio.google.com</a> (recommended — free tier)<br>
+        • <b>xAI Grok:</b> <a href="https://console.x.ai/" target="_blank" style="color:var(--cy)">console.x.ai</a><br>
+        • <b>OpenAI:</b> <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--cy)">platform.openai.com</a><br>
+        • <b>Anthropic:</b> <a href="https://console.anthropic.com/" target="_blank" style="color:var(--cy)">console.anthropic.com</a><br><br>
+        <b style="color:var(--ac)">Market Telemetry Key (for Stock Tickers)</b><br>
+        • <b>Finnhub:</b> <a href="https://finnhub.io/" target="_blank" style="color:var(--cy)">finnhub.io</a> — free API key for live stock prices on HQ rooftops.
+      </div>
+    </div>
+
+    <div class="instr-section"><div class="instr-h">🗺️ Controls</div><div class="instr-p"><b>Desktop:</b> Drag to pan. Scroll wheel to zoom. Click characters/buildings for details. <b>📡 Track</b> to follow anyone.<br><b>Mobile:</b> Swipe to pan. Pinch to zoom. Tap characters for profiles. Tap buildings to enter.</div></div>
+
+    <button class="instr-got" onclick="document.getElementById('instrOv').classList.remove('open')">Got it — Let me in!</button>
+  </div>
+</div>
+
+<script>
+// ─── MOBILE DETECTION ───
+const _isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || ('ontouchstart' in window && window.innerWidth < 1024);
+const _isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+if (_isMobile) {
+    document.body.classList.add('is-mobile');
+    const warn = document.getElementById('mobileWarning');
+    if (warn) warn.style.display = 'block';
+}
+if (_isStandalone) document.body.classList.add('is-standalone');
+window.isMobile = _isMobile;
+window.isStandalone = _isStandalone;
+
+// ─── PWA INSTALL PROMPT ───
+let _deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    _deferredInstallPrompt = e;
+    if (_isMobile) {
+        const banner = document.getElementById('installBanner');
+        if (banner) banner.style.display = 'flex';
+    }
+});
+
+document.getElementById('installBtn')?.addEventListener('click', async () => {
+    if (!_deferredInstallPrompt) return;
+    _deferredInstallPrompt.prompt();
+    const result = await _deferredInstallPrompt.userChoice;
+    _deferredInstallPrompt = null;
+    document.getElementById('installBanner').style.display = 'none';
+    if (result.outcome === 'accepted') {
+        document.body.classList.add('is-standalone');
+        window.isStandalone = true;
+    }
+});
+
+document.getElementById('installDismiss')?.addEventListener('click', () => {
+    document.getElementById('installBanner').style.display = 'none';
+    sessionStorage.setItem('sc_install_dismissed', '1');
+});
+
+// Don't re-show if dismissed this session
+if (sessionStorage.getItem('sc_install_dismissed')) {
+    const b = document.getElementById('installBanner');
+    if (b) b.style.display = 'none';
+}
+
+// ─── ORIENTATION OVERLAY (portrait blocker) ───
+function _checkOrientation() {
+    if (!_isMobile) return;
+    const overlay = document.getElementById('orientationOverlay');
+    if (!overlay) return;
+    const isPortrait = window.innerHeight > window.innerWidth;
+    overlay.style.display = isPortrait ? 'flex' : 'none';
+}
+window.addEventListener('resize', _checkOrientation);
+window.addEventListener('orientationchange', () => setTimeout(_checkOrientation, 100));
+// Initial check — only blocks in-game, not landing page
+_checkOrientation();
+
+// ─── FULLSCREEN + WAKE LOCK HELPERS ───
+window._scWakeLock = null;
+async function _requestWakeLock() {
+    if ('wakeLock' in navigator) {
+        try { window._scWakeLock = await navigator.wakeLock.request('screen'); } catch(e) {}
+    }
+}
+async function _requestFullscreen() {
+    if (!_isMobile) return;
+    const el = document.documentElement;
+    try {
+        if (el.requestFullscreen) await el.requestFullscreen();
+        else if (el.webkitRequestFullscreen) await el.webkitRequestFullscreen();
+    } catch(e) {}
+}
+// Try to lock orientation to landscape when entering city
+async function _lockLandscape() {
+    try {
+        if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape');
+        }
+    } catch(e) {} // Silently fail — not all browsers support this
+}
+
+// ─── HAPTIC FEEDBACK ───
+window.haptic = (ms) => {
+    if (_isMobile && navigator.vibrate) navigator.vibrate(ms || 10);
+};
+
+// ─── FULLSCREEN ON FIRST TAP (hides Android notification bar) ───
+if (_isMobile) {
+    const _goFullOnce = () => {
+        _requestFullscreen();
+        document.removeEventListener('click', _goFullOnce);
+        document.removeEventListener('touchend', _goFullOnce);
+    };
+    document.addEventListener('click', _goFullOnce, { once: true });
+    document.addEventListener('touchend', _goFullOnce, { once: true });
+}
+</script>
+
+<div id="gameWrap">
+  <div class="top">
+    <div class="top-row top-main">
+      <div class="logo"><span class="logo-i">🏙️</span><h1>SINGULARITY CITY</h1></div>
+      <div class="nfo" id="nfo"></div>
+    </div>
+    <div class="top-row">
+      <div class="ctrls"><div class="ctrls-scroll" id="ctrlBar" role="toolbar" aria-label="City controls">
+        <button class="btn" id="btnScan" onclick="UI.uiClick();API.doScan()" title="Discover new AI models">🛰️ Scan</button>
+        <button class="btn" id="btnMacro" onclick="UI.uiClick();G.toggleMacro()" title="Macro-layer view">🌍 Holomap</button>
+        <button class="btn" id="btnLog" onclick="UI.uiClick();UI.toggleLog()" title="Scan history">📋 Log</button>
+        <button class="btn" onclick="UI.uiClick();UI.showBenchmarks()" title="Full leaderboard">📊 Bench</button>
+        <button class="btn" onclick="UI.uiClick();UI.showCensus()" title="All citizens">👥 Census</button>
+        <button class="btn" onclick="UI.uiClick();UI.showLaunches()" title="Upcoming rocket launches">🚀 Launches</button>
+        <button class="btn" onclick="UI.uiClick();UI.showFamilyTree()" title="Family trees">🧬 Lineage</button>
+        <button class="btn" onclick="UI.uiClick();UI.showNewsPanel()" title="AI headlines">📰 News</button>
+        <button class="btn" onclick="UI.uiClick();UI.showCalendar()" title="AI events calendar">📅 Cal</button>
+        <button class="btn" onclick="UI.uiClick();UI.showCompute()" title="Global Supply Chain & Clusters">🏭 Hardware</button>
+        <button class="btn" onclick="UI.uiClick();if(typeof PowerEnv!=='undefined')PowerEnv.showGridPanel()" title="Power Grid Status">⚡ Grid</button>
+        <button class="btn" onclick="UI.uiClick();UI.showCostDashboard()" title="Pricing comparison & ROI">💰 Costs</button>
+        <button class="btn" onclick="UI.uiClick();UI.showAnalyst()" title="Ask AI questions">🤖 Analyst</button>
+        <button class="btn" onclick="UI.uiClick();Quests.showPanel()" title="Quest log &amp; achievements">📜 Quests</button>
+        <button class="btn" id="btnXRay" onclick="UI.uiClick();if(typeof XRayMode!=='undefined')XRayMode.toggle()" title="X-Ray diagnostic overlay">🔬 X-Ray</button>
+        <button class="btn" onclick="UI.uiClick();UI.showSettings()" title="Settings" aria-label="Settings">⚙️</button>
+        <button class="btn" id="btnSound" onclick="UI.uiClick();UI.toggleSound()" title="Sound on/off" aria-label="Toggle sound">🔊</button>
+      </div></div>
+    </div>
+  </div>
+  
+  <div class="toasts" id="toasts"></div>
+  <div class="vp" id="viewport"></div>
+
+  <div id="macroUI">
+    <div class="m-title">GLOBAL NETWORK <span style="font-size:7px;color:#6a6a80;letter-spacing:1px">— SIMULATED TELEMETRY</span></div>
+    <div class="m-stat"><span>ACTIVE GPUS:</span> <span style="color:#4ade80">~3,540,000</span></div>
+    <div class="m-stat"><span>POWER DRAW:</span> <span style="color:#facc15">15.2 GW</span></div>
+    <div class="m-stat"><span>DATA THROUGHPUT:</span> <span style="color:#a78bfa">842 PB/s</span></div>
+    <div class="m-stat"><span>AGI PROBABILITY:</span> <span style="color:#22d3ee" id="agiProb">14.7%</span></div>
+    <div class="m-desc">Hover over a lab node to view connected hardware clusters. Click a node to forcefully allocate burst compute to the Singularity core.</div>
+  </div>
+
+  <!-- HOLOMAP: Three.js 3D Galaxy View -->
+  <canvas id="holomapCv" style="display:none"></canvas>
+  <div id="holomap-labels" style="display:none"></div>
+  <div id="holomapTooltip" style="display:none"></div>
+  <div id="holomapInfoPanel"></div>
+  <div id="holoHud"><div id="holoHudInfo"></div></div>
+
+  <!-- ORBIT MODE: Three.js 3D Earth + Satellites -->
+  <canvas id="orbitCv" style="display:none;position:fixed;inset:0;z-index:400;transition:opacity 0.2s"></canvas>
+  <div id="orbit-hud" style="display:none"></div>
+  <div id="orbitInfoPanel"></div>
+
+  <div id="gameTooltip" class="game-tt" style="display:none"></div>
+  <div class="tick"><span class="tick-lbl">▶ NEWS</span><span class="tick-txt" id="tickerText"></span></div>
+  <div class="ipanel" id="infoPanel"></div>
+  <div class="slog" id="scanLog"><div class="slog-t">📋 SCAN LOG</div><div id="logEntries"></div></div>
+  
+  <!-- MINIMAP -->
+  <div id="minimap" class="collapsed">
+    <div class="mm-header" onclick="document.getElementById('minimap').classList.toggle('collapsed')" style="cursor:pointer"><span class="mm-title">🗺️ MAP</span><button class="mm-toggle" onclick="event.stopPropagation();document.getElementById('minimap').classList.toggle('collapsed')">—</button></div>
+    <canvas id="mmCanvas" width="240" height="40"></canvas>
+    <div class="mm-zones" id="mmZones"></div>
+  </div>
+  
+  <div class="ov" id="censusOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:850px; max-width:95vw;" id="censusPan"></div></div>
+  <div class="ov" id="settingsOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:460px; max-height:90vh; overflow-y:auto;" id="settingsPan"></div></div>
+  <div class="ov" id="benchOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:800px;max-width:95vw" id="benchPan"></div></div>
+  <div class="ov" id="compareOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:700px;max-width:95vw" id="comparePan"></div></div>
+  <div class="ov" id="launchOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:550px;max-width:95vw" id="launchPan"></div></div>
+  <div class="ov" id="familyOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:700px;max-width:95vw" id="familyPan"></div></div>
+  <div class="ov" id="calendarOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:500px" id="calendarPan"></div></div>
+  <div class="ov" id="computeOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:600px" id="computePan"></div></div>
+  <div class="ov" id="costOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:700px;max-width:95vw" id="costPan"></div></div>
+  <div class="ov" id="questsOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:560px;max-height:85vh;overflow-y:auto" id="questsPan"></div></div>
+  <div class="ov" id="hnOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:520px" id="hnPan"></div></div>
+  <div class="ov" id="newsOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:520px" id="newsPan"></div></div>
+  <div class="ov" id="analystOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:520px" id="analystPan"></div></div>
+  <div class="ov" id="kardashevOv" onclick="if(event.target===this)this.classList.remove('open')"><div class="ov-pan" style="width:520px;max-width:95vw" id="kardashevPan"></div></div>
+</div>
+
+<!-- ═══ TERMINAL MODE SHELL (Phase 1)
+     Sibling of #gameWrap so it can overlay the PixiJS canvas when body.terminal-mode
+     is set. Empty until Terminal.open() populates it at runtime. -->
+<div id="terminal-shell"></div>
+
+<!-- Embed mode "open full city" badge (Phase 3b) -->
+<a id="embedBadge" href="https://singularitycity.net" target="_blank" rel="noopener">🏙️ OPEN FULL CITY ↗</a>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.3.2/pixi.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pixi-filters@5.3.0/dist/pixi-filters.js"></script>
+<!-- Pinned: the bare /npm/chart.js URL silently adopts the next MAJOR release
+     and its breaking changes. 4.5.1 = what the unpinned URL resolved to when pinned. -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js"></script>
+<!-- Pinned like chart.js above: the data backbone must not silently adopt new
+     minors. 2.110.2 = what the unpinned @2 URL resolved to when pinned (2026-07). -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+<script defer src="js/personality.js?v=532"></script>
+<script defer src="js/data.js?v=532"></script>
+<script defer src="js/api.js?v=532"></script>
+<script defer src="js/ui.js?v=532"></script>
+<script defer src="js/snd.js?v=532"></script>
+<script defer src="js/camera.js?v=532"></script>
+<script defer src="js/environment.js?v=532"></script>
+<script defer src="js/entities_gfx.js?v=532"></script>
+<script defer src="js/entities.js?v=532"></script>
+<script defer src="js/underground.js?v=532"></script>
+<script defer src="js/city_elevator.js?v=532"></script>
+<script defer src="js/interior_city_props.js?v=532"></script>
+<script defer src="js/interior_city_ai.js?v=532"></script>
+<script defer src="js/interior_avatar_states.js?v=532"></script>
+<script defer src="js/interior_city_core.js?v=532"></script>
+<script defer src="js/interior_res_props.js?v=532"></script>
+<script defer src="js/interior_res_ai.js?v=532"></script>
+<script defer src="js/interior_res_core.js?v=532"></script>
+<script defer src="js/power_zone.js?v=532"></script>
+<script defer src="js/power_env.js?v=532"></script>
+<script defer src="js/power_zone_interior.js?v=532"></script>
+<script defer src="js/port_zone.js?v=532"></script>
+<script defer src="js/port_env.js?v=532"></script>
+<script defer src="js/interior_dc.js?v=532"></script>
+<script defer src="js/interior_bar.js?v=532"></script>
+<script defer src="js/human_avatar.js?v=532"></script>
+<script defer src="js/npc_housing.js?v=532"></script>
+<script defer src="js/street_vendors.js?v=532"></script>
+<script defer src="js/interior_npc.js?v=532"></script>
+<script defer src="js/interior_legacy.js?v=532"></script>
+<script defer src="js/interior_metro.js?v=532"></script>
+<script defer src="js/interior_train.js?v=532"></script>
+<script defer src="js/interior_newspaper.js?v=532"></script>
+<script defer src="js/interior_manager.js?v=532"></script>
+<script defer src="js/datacenter_data.js?v=532"></script>
+<script defer src="js/space_rockets.js?v=532"></script>
+<script defer src="js/space_data.js?v=532"></script>
+<script defer src="js/space_environment.js?v=532"></script>
+<script defer src="js/space_entities.js?v=532"></script>
+<script defer src="js/space_interior.js?v=532"></script>
+<script defer src="js/orbit_mode.js?v=532"></script>
+<script defer src="js/seasonal.js?v=532"></script>
+<script defer src="js/seasonal_env.js?v=532"></script>
+<script defer src="js/aurora.js?v=532"></script>
+<script defer src="js/conference.js?v=532"></script>
+<script defer src="js/university.js?v=532"></script>
+<script defer src="js/court.js?v=532"></script>
+<script defer src="js/jail.js?v=532"></script>
+<script defer src="js/city_park.js?v=532"></script>
+<script defer src="js/bird_flocks.js?v=532"></script>
+<script defer src="js/ai_index.js?v=532"></script>
+<script defer src="js/supply_chain.js?v=532"></script>
+<script defer src="js/black_market.js?v=532"></script>
+<script defer src="js/interior_black_market.js?v=532"></script>
+<script defer src="js/crowd_separation.js?v=532"></script>
+<script defer src="js/shadows.js?v=532"></script>
+<script defer src="js/city_ambience.js?v=532"></script>
+<script defer src="js/vc_row.js?v=532"></script>
+<script defer src="js/vc_row_env.js?v=532"></script>
+<script defer src="js/interior_vcrow.js?v=532"></script>
+<script defer src="js/embassy_row.js?v=532"></script>
+<script defer src="js/embassy_quarter.js?v=532"></script>
+<script defer src="js/alignment_forest.js?v=532"></script>
+<script defer src="js/backbone_zone.js?v=532"></script>
+<script defer src="js/backbone_env.js?v=532"></script>
+<script defer src="js/interior_backbone.js?v=532"></script>
+<script defer src="js/robot_models.js?v=532"></script>
+<script defer src="js/robotics_zone.js?v=532"></script>
+<script defer src="js/robotics_env.js?v=532"></script>
+<script defer src="js/interior_robotics.js?v=532"></script>
+<script defer src="js/longevity_zone.js?v=532"></script>
+<script defer src="js/longevity_env.js?v=532"></script>
+<script defer src="js/interior_longevity.js?v=532"></script>
+<script defer src="js/agents_zone.js?v=532"></script>
+<script defer src="js/agents_env.js?v=532"></script>
+<script defer src="js/interior_agents.js?v=532"></script>
+<script defer src="js/interior_alignment.js?v=532"></script>
+<script defer src="js/interior_embassy.js?v=532"></script>
+<script defer src="js/interior_ambassador_res.js?v=532"></script>
+<script defer src="js/xray_mode.js?v=532"></script>
+<script defer src="js/multiplayer.js?v=532"></script>
+<script defer src="js/holomap.js?v=532"></script>
+<script defer src="js/easter_eggs.js?v=532"></script>
+<script defer src="js/persistence.js?v=532"></script>
+<script defer src="js/quests.js?v=532"></script>
+<script defer src="js/hn_blimps.js?v=532"></script>
+<script defer src="js/news_reactivity.js?v=532"></script>
+<script defer src="js/citizen_of_day.js?v=532"></script>
+<script defer src="js/daily_briefing.js?v=532"></script>
+<script defer src="js/macro_view.js?v=532"></script>
+<script defer src="js/debug_overlay.js?v=532"></script>
+<script defer src="js/bitmap_fonts.js?v=532"></script>
+<script defer src="js/goals.js?v=532"></script>
+<script defer src="js/auto_tour.js?v=532"></script>
+<script defer src="js/tutorial.js?v=532"></script>
+<script defer src="js/newspaper.js?v=532"></script>
+<script defer src="js/kardashev.js?v=532"></script>
+<script defer src="js/terminal.js?v=532"></script>
+<script defer src="js/engine.js?v=532"></script>
+<script defer src="js/sc_integrated_bridge.js?v=1"></script>
+
+<!-- ═══ EMBED MODE AUTO-BOOT (Phase 3b) ═══
+     When ?embed=1: auto-enter the city and kick off AutoTour once PixiJS is ready. -->
+<script>
+(function(){
+    if (!window.SC_EMBED) return;
+    function autoBoot() {
+        // Mark AutoTour as sticky BEFORE starting so input listeners don't kill the tour
+        // during the initial entry click/scroll. AutoTour.init() has already run by now.
+        try {
+            if (typeof AutoTour !== 'undefined') AutoTour.embedSticky = true;
+        } catch(e) {}
+        try {
+            if (typeof enterCity === 'function') enterCity();
+        } catch(e) {}
+        // Poll until the city has finished booting (G.app + tick past initial settle),
+        // then start the auto-tour. Give up after ~20 seconds.
+        var attempts = 0;
+        var maxAttempts = 1200; // ~20s at 60fps
+        function kickTour() {
+            attempts++;
+            if (typeof G !== 'undefined' && G.app && G.app.stage &&
+                G.tick >= 130 && typeof AutoTour !== 'undefined' && !G.activeInterior) {
+                try { AutoTour.start(); } catch(e) {}
+                return;
+            }
+            if (attempts < maxAttempts) requestAnimationFrame(kickTour);
+        }
+        requestAnimationFrame(kickTour);
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', autoBoot);
+    } else {
+        autoBoot();
+    }
+})();
+</script>
+</body>
+</html>
+

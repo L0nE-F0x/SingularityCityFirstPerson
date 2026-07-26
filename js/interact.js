@@ -18,11 +18,40 @@ export const Interact = {
     init() {
         document.addEventListener('keydown', e => {
             if (e.code !== 'KeyE' || !G.started || G.panelOpen) return;
-            // inside a building, E at the doorway is the way out
+
+            // Riding metro: E alights when train is dwelling
+            if (G.ridingMetro && G.metro) {
+                const t = G.metro.trains[G.metro.riding];
+                if (t && t.atStop && t.dwellT > 0.2) G.metro.alight();
+                else G.ui?.addToast?.('Wait for the next station…', 'info');
+                return;
+            }
+
+            // Inside a building
             if (G.inside) {
+                // Elevator call when standing at lift
+                if (Interior.atLift() && Interior.maxFloor > 0) {
+                    Interior.setFloor((Interior.floor + 1) % (Interior.maxFloor + 1));
+                    return;
+                }
+                // Platform boarding (metro upper floor)
+                if (G.inside.type === 'metro' && Interior.floor === Interior.maxFloor && G.metro) {
+                    const hit = G.metro.trainAtStop(G.inside.id);
+                    if (hit) { G.metro.board(hit.index); return; }
+                    G.ui?.addToast?.('No train at the platform — wait a moment', 'info');
+                    return;
+                }
                 if (Interior.atExit()) Interior.exit();
                 return;
             }
+
+            // Street: board if a train is dwelling at the nearest station
+            if (G.metro) {
+                const cam = G.camera.position;
+                const board = G.metro.canBoardNear(cam.x, cam.z);
+                if (board) { G.metro.board(board.index); return; }
+            }
+
             if (!this.target) return;
             if (this.target.kind === 'citizen') { G.ui.showCitizen(this.target.ref); G.audio?.sfx('open'); return; }
             // close enough to the door to walk in, otherwise just read the plaque
@@ -72,11 +101,37 @@ export const Interact = {
         const cam = G.camera;
         const px = cam.position.x, pz = cam.position.z;
 
-        // indoors: the only interaction is the way out
-        if (G.inside) {
+        // riding metro
+        if (G.ridingMetro && G.metro) {
             this.target = null;
             G.ui.lookLabel(null);
-            G.ui.prompt(Interior.atExit() ? '<b>E</b> — step outside' : null);
+            const t = G.metro.trains[G.metro.riding];
+            if (t && t.atStop && t.dwellT > 0.2) {
+                const st = G.bldById[t.atStop];
+                G.ui.prompt(`<b>E</b> — alight at ${st?.name || t.atStop}`);
+            } else {
+                G.ui.prompt('Metro — next stop soon…');
+            }
+            return;
+        }
+
+        // indoors: exit, elevator, or board from platform
+        if (G.inside) {
+            this.target = null;
+            const flLabel = Interior.maxFloor > 0 ? ` · Floor ${Interior.floor}/${Interior.maxFloor}` : '';
+            G.ui.lookLabel(G.inside.name + flLabel);
+            if (Interior.maxFloor > 0 && Interior.atLift()) {
+                G.ui.prompt(`<b>E</b> ride lift · <b>F</b> next · <b>0–${Interior.maxFloor}</b> jump  (now F${Interior.floor})`);
+            } else if (Interior.maxFloor > 0) {
+                G.ui.prompt(`Walk to the <b>lift bank</b> (left wall) · F${Interior.floor}/${Interior.maxFloor} · or press <b>F</b>`);
+            } else if (G.inside.type === 'metro' && Interior.floor === Interior.maxFloor && G.metro) {
+                const hit = G.metro.trainAtStop(G.inside.id);
+                G.ui.prompt(hit ? '<b>E</b> — board the train' : 'Platform — waiting for a train…');
+            } else if (Interior.atExit()) {
+                G.ui.prompt('<b>E</b> — step outside');
+            } else {
+                G.ui.prompt(null);
+            }
             return;
         }
 
@@ -95,7 +150,17 @@ export const Interact = {
             }
         }
 
-        // ── look target ──
+                // Street metro board opportunity (takes priority when train is dwelling)
+        if (G.metro && !G.inside) {
+            const board = G.metro.canBoardNear(px, pz);
+            if (board) {
+                this.target = null;
+                G.ui.lookLabel(null);
+                G.ui.prompt(`<b>E</b> — board metro at ${board.station.name}`);
+                return;
+            }
+        }
+// ── look target ──
         const fwd = { x: -Math.sin(G.player.yaw), z: -Math.cos(G.player.yaw) };
         let best = null, bestScore = 0.75;   // min dot product ~ facing
 

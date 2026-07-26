@@ -1,0 +1,30 @@
+# Never reformat the entire 32K-line codebase in one go — it creates
+# massive noise. Prettier is opt-in per file via editor-on-save.
+# These paths are hard-excluded from `npm run format` CLI runs:
+
+node_modules
+.claude
+.git
+coverage
+dist
+build
+sw.js
+package-lock.json
+
+# Large static assets
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.ico
+*.webp
+*.mp3
+*.mp4
+*.woff
+*.woff2
+*.pdf
+og-image.png
+
+# Third-party vendor files if any get added later
+vendor
+lib

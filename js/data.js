@@ -504,6 +504,45 @@ export function getAct(stg, dp, seed, model) {
     return { act: 'sleep', bid: resId };
 }
 
+/* Lab HQ ids for founder / model work destinations (mirrors citizens LAB_HQ). */
+export const LAB_HQ = {
+    openai: 'bld_o', anthropic: 'bld_a', google: 'bld_g', meta: 'bld_m',
+    mistral: 'bld_mi', xai: 'bld_x', deepseek: 'bld_ds', other: 'open_square'
+};
+
+/**
+ * Founder / CEO schedule — more visible & mobile than rank-and-file models.
+ * Findable at HQ most of the day, plus lunch, parks, bars, VIP commute windows.
+ */
+export function getFounderAct(dp, seed, model) {
+    const region = (model.lab && LABS[model.lab] && LABS[model.lab].region) || 'us';
+    const resId = 'res_' + region;
+    const hq = LAB_HQ[model.lab] || 'open_square';
+    const s = (seed * 31) % 100;
+    if (dp < 0.22) return { act: 'sleep', bid: resId };
+    if (dp < 0.30) return { act: 'commute', bid: hq };
+    if (dp < 0.48) return { act: 'work', bid: hq };
+    if (dp < 0.55) {
+        if (s < 40) return { act: 'lunch', bid: 'cafe' };
+        if (s < 70) return { act: 'socialize', bid: 'park' };
+        return { act: 'work', bid: hq };
+    }
+    if (dp < 0.70) return { act: 'work', bid: hq };
+    if (dp < 0.78) {
+        if (s < 25) return { act: 'socialize', bid: 'open_square' };
+        if (s < 45) return { act: 'arena', bid: 'arena' };
+        return { act: 'work', bid: hq };
+    }
+    if (dp < 0.88) {
+        if (s < 35) return { act: 'socialize', bid: 'neon_bar' };
+        if (s < 55) return { act: 'socialize', bid: 'park' };
+        return { act: 'work', bid: hq };
+    }
+    if (dp < 0.94) return { act: 'commute', bid: resId };
+    return { act: 'sleep', bid: resId };
+}
+
+
 // ─── ACHIEVEMENTS ────────────────────────────────────────────────────────────
 export const ACHIEVEMENTS = {
     first_steps:     { name: 'First Steps',       desc: 'Enter the city on foot for the first time.', icon: '👣' },

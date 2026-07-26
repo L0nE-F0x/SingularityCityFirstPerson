@@ -1,0 +1,101 @@
+{
+  "sources": [
+    { "type": "Coal", "count": 10434, "totalMW": 2132000, "emoji": "🏭", "color": "#94a3b8", "plants": [
+      { "name": "Taichung Power Plant", "mw": 5780 },
+      { "name": "Belchatów Power Station", "mw": 5354 },
+      { "name": "Vindhyachal STPS", "mw": 4760 },
+      { "name": "Datang Tuoketuo", "mw": 6720 },
+      { "name": "Kashima Power Station", "mw": 4400 }
+    ]},
+    { "type": "Gas", "count": 8920, "totalMW": 1947000, "emoji": "🔥", "color": "#f97316", "plants": [
+      { "name": "Surgut-2 GRES", "mw": 5597 },
+      { "name": "Futtsu Power Station", "mw": 5040 },
+      { "name": "West County Energy Center", "mw": 3750 },
+      { "name": "Buk Power Complex", "mw": 4000 },
+      { "name": "Jebel Ali Station", "mw": 8695 }
+    ]},
+    { "type": "Hydro", "count": 7245, "totalMW": 1392000, "emoji": "🌊", "color": "#06b6d4", "plants": [
+      { "name": "Three Gorges Dam", "mw": 22500 },
+      { "name": "Itaipu Dam", "mw": 14000 },
+      { "name": "Xiluodu Dam", "mw": 13860 },
+      { "name": "Guri Dam", "mw": 10235 },
+      { "name": "Belo Monte Dam", "mw": 11233 }
+    ]},
+    { "type": "Wind", "count": 15230, "totalMW": 1017000, "emoji": "💨", "color": "#4ade80", "plants": [
+      { "name": "Gansu Wind Farm", "mw": 8000 },
+      { "name": "Jaisalmer Wind Park", "mw": 1600 },
+      { "name": "Alta Wind Energy Center", "mw": 1547 },
+      { "name": "Hornsea Wind Farm", "mw": 2852 },
+      { "name": "Dogger Bank Wind Farm", "mw": 3600 }
+    ]},
+    { "type": "Solar", "count": 18640, "totalMW": 1612000, "emoji": "☀️", "color": "#fbbf24", "plants": [
+      { "name": "Bhadla Solar Park", "mw": 2245 },
+      { "name": "Huanghe Hydropower Hainan", "mw": 2200 },
+      { "name": "Pavagada Solar Park", "mw": 2050 },
+      { "name": "Benban Solar Park", "mw": 1650 },
+      { "name": "Tengger Desert Solar Park", "mw": 1547 }
+    ]},
+    { "type": "Nuclear", "count": 440, "totalMW": 395000, "emoji": "☢️", "color": "#22d3ee", "plants": [
+      { "name": "Kashiwazaki-Kariwa", "mw": 7965 },
+      { "name": "Bruce Nuclear Station", "mw": 6384 },
+      { "name": "Zaporizhzhia NPP", "mw": 5700 },
+      { "name": "Hanul Nuclear Power", "mw": 5928 },
+      { "name": "Gravelines Nuclear", "mw": 5460 }
+    ]},
+    { "type": "Biomass", "count": 3780, "totalMW": 155000, "emoji": "🌿", "color": "#a3e635", "plants": [
+      { "name": "Ironbridge Power Station", "mw": 740 },
+      { "name": "Drax Power Station (bio)", "mw": 2595 },
+      { "name": "Polaniec Biomass Unit", "mw": 205 },
+      { "name": "Alholmens Kraft", "mw": 265 },
+      { "name": "Tilbury Green Power", "mw": 190 }
+    ]},
+    { "type": "Oil", "count": 3210, "totalMW": 265000, "emoji": "🛢️", "color": "#78716c", "plants": [
+      { "name": "Shoaiba Power Plant", "mw": 5600 },
+      { "name": "Qurayyah Combined Cycle", "mw": 3927 },
+      { "name": "Marafiq IWPP", "mw": 2745 },
+      { "name": "Ras Abu Fontas", "mw": 2730 },
+      { "name": "Shuaiba South", "mw": 1200 }
+    ]},
+    { "type": "Geothermal", "count": 285, "totalMW": 16200, "emoji": "🌋", "color": "#ef4444", "plants": [
+      { "name": "The Geysers", "mw": 1517 },
+      { "name": "Makban Geothermal", "mw": 458 },
+      { "name": "Cerro Prieto", "mw": 720 },
+      { "name": "Olkaria Geothermal", "mw": 861 },
+      { "name": "Hellisheiði", "mw": 303 }
+    ]},
+    { "type": "Waste", "count": 1420, "totalMW": 18500, "emoji": "♻️", "color": "#a78bfa", "plants": [
+      { "name": "Shenzhen East WtE", "mw": 300 },
+      { "name": "AEB Amsterdam", "mw": 160 },
+      { "name": "Covanta Indianapolis", "mw": 130 },
+      { "name": "SELCHP London", "mw": 95 },
+      { "name": "Klemetsrud Oslo", "mw": 80 }
+    ]},
+    { "type": "Tidal", "count": 12, "totalMW": 530, "emoji": "🌊", "color": "#0ea5e9", "plants": [
+      { "name": "Sihwa Lake Tidal", "mw": 254 },
+      { "name": "La Rance Tidal", "mw": 240 },
+      { "name": "Annapolis Royal", "mw": 20 },
+      { "name": "Jiangxia Tidal", "mw": 11 },
+      { "name": "MeyGen Pentland Firth", "mw": 6 }
+    ]}
+  ],
+  "byRegion": [
+    { "region": "Asia-Pacific", "count": 28450, "totalMW": 4585000 },
+    { "region": "Europe",       "count": 15320, "totalMW": 1287000 },
+    { "region": "North America","count": 11240, "totalMW": 1482000 },
+    { "region": "Middle East",  "count": 3150,  "totalMW": 562000 },
+    { "region": "South America","count": 4820,  "totalMW": 398000 },
+    { "region": "Africa",       "count": 4120,  "totalMW": 305000 },
+    { "region": "Australia",    "count": 2516,  "totalMW": 331230 }
+  ],
+  "plantCount": 69616,
+  "totalMW": 8950230,
+  "renewMW": 4192730,
+  "fossilMW": 4344000,
+  "renewPct": 46.8,
+  "fossilPct": 48.5,
+  "regionsScanned": 7,
+  "regionsTotal": 7,
+  "fetchedAt": "2026-04-07T00:00:00Z",
+  "dataSource": "Aggregated from IRENA Renewable Capacity Statistics 2026, IEA World Energy Outlook, Global Energy Monitor",
+  "note": "Installed capacity (nameplate MW). Updated periodically."
+}

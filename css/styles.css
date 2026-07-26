@@ -1,4 +1,4 @@
-/* ══════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════
    SINGULARITY CITY — FIRST PERSON · UI stylesheet
    Dark neon theme matching singularitycity.net (Press Start 2P /
    Silkscreen / JetBrains Mono, cyan accent on deep space blue).
@@ -88,8 +88,12 @@ button { font-family: inherit; cursor: pointer; }
 #hudRight { position: absolute; right: 18px; top: 16px; text-align: right; font-family: var(--sx); font-size: 12px; color: var(--t3); text-shadow: 0 1px 3px #000; }
 #hudRight b { color: var(--gold); }
 #minimap {
-    position: absolute; right: 16px; top: 64px; border: 1px solid var(--bd);
-    border-radius: 4px; background: rgba(10,14,26,.88); box-shadow: 0 4px 18px rgba(0,0,0,.5);
+    position: absolute; right: 16px; top: 64px;
+    width: 260px; height: 220px;
+    border: 1px solid rgba(34,211,238,.35);
+    border-radius: 6px; background: rgba(7,11,20,.92);
+    box-shadow: 0 8px 28px rgba(0,0,0,.55);
+    image-rendering: auto;
 }
 #questTracker {
     position: absolute; left: 18px; top: 110px; max-width: 250px;
@@ -321,3 +325,103 @@ button { font-family: inherit; cursor: pointer; }
 .term-row { border-bottom: 1px solid #152028; padding: 3px 0; }
 .term-row em { color: #64748b; font-style: normal; float: right; }
 .term-foot { font-size: 10px; color: #475569; margin-top: 8px; text-align: center; }
+
+/* ========== INTEGRATION SHELL (CityStore views) ========== */
+#scShell { position: fixed; inset: 0 0 auto 0; z-index: 60; pointer-events: none; }
+.sc-shell-bar {
+  pointer-events: auto;
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 8px 14px; background: linear-gradient(180deg, rgba(7,11,20,.92), rgba(7,11,20,.55));
+  border-bottom: 1px solid rgba(148,163,184,.18);
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #e2e8f0;
+  backdrop-filter: blur(8px);
+}
+.sc-shell-brand { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sc-shell-mark { font-size: 16px; }
+.sc-shell-title { font-weight: 700; letter-spacing: .08em; font-size: 11px; }
+.sc-shell-mode {
+  font-size: 9px; letter-spacing: .12em; padding: 2px 6px; border-radius: 4px;
+  background: rgba(244,114,182,.18); color: #f9a8d4; border: 1px solid rgba(244,114,182,.35);
+}
+.sc-shell-views { display: flex; gap: 6px; flex-wrap: wrap; justify-content: center; }
+.sc-shell-btn {
+  pointer-events: auto; cursor: pointer;
+  background: rgba(15,23,42,.75); color: #cbd5e1; border: 1px solid rgba(148,163,184,.25);
+  border-radius: 6px; padding: 6px 10px; font: 600 10px/1 'JetBrains Mono', monospace;
+}
+.sc-shell-btn:hover { border-color: #67e8f9; color: #fff; }
+.sc-shell-btn.active {
+  background: rgba(34,211,238,.15); border-color: #22d3ee; color: #a5f3fc;
+}
+.sc-shell-meta { display: flex; align-items: center; gap: 10px; }
+.sc-live-badge {
+  font-size: 9px; letter-spacing: .14em; font-weight: 700; padding: 3px 7px; border-radius: 999px;
+  border: 1px solid rgba(148,163,184,.35);
+}
+.sc-live-badge.online { color: #86efac; border-color: rgba(74,222,128,.5); background: rgba(22,101,52,.25); }
+.sc-live-badge.offline { color: #94a3b8; background: rgba(30,41,59,.5); }
+.sc-shell-clock { opacity: .85; tabular-nums: true; font-variant-numeric: tabular-nums; }
+.sc-shell-link {
+  color: #7dd3fc; text-decoration: none; border-bottom: 1px dotted rgba(125,211,252,.5);
+}
+.sc-shell-link:hover { color: #e0f2fe; }
+
+.sc-map-view {
+  pointer-events: auto;
+  position: fixed; inset: 44px 0 0 0; z-index: 55;
+  background: #070b14; display: flex; flex-direction: column; align-items: stretch;
+  padding: 12px 16px 16px; gap: 10px; overflow: auto;
+}
+.sc-map-view.hidden { display: none !important; }
+.sc-map-hud { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.sc-map-h1 { font: 700 14px 'Silkscreen', monospace; letter-spacing: .06em; color: #f8fafc; }
+.sc-map-sub { font-size: 11px; color: #94a3b8; margin-top: 4px; max-width: 52ch; }
+.sc-map-side { text-align: right; font-size: 11px; color: #cbd5e1; line-height: 1.55; }
+#scMapCanvas {
+  flex: 1; width: 100%; min-height: 360px; border-radius: 10px;
+  border: 1px solid rgba(148,163,184,.2); background: #0a0e1a; cursor: crosshair;
+}
+.sc-map-news {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 6px 12px;
+  font-size: 11px; max-height: 88px; overflow: auto;
+}
+.sc-map-news a { color: #e2e8f0; text-decoration: none; }
+.sc-map-news a:hover { color: #67e8f9; }
+.sc-map-news b { color: #22d3ee; margin-right: 6px; font-size: 9px; letter-spacing: .06em; }
+.sc-map-hint { font-size: 10px; color: #64748b; text-align: center; }
+
+body.sc-view-map #hud,
+body.sc-view-map #crosshair,
+body.sc-view-map #hintBar { opacity: 0; pointer-events: none; }
+body.sc-view-map #app canvas { filter: brightness(.35) saturate(.7); }
+
+/* Nudge start screen / HUD under shell bar */
+#startScreen { padding-top: 52px; }
+#hudLeft { top: 56px !important; }
+#hudRight { top: 56px !important; }
+
+
+
+button.sc-shell-pixi-btn {
+  pointer-events: auto; cursor: pointer;
+  background: linear-gradient(135deg, rgba(190,24,93,.35), rgba(124,58,237,.35));
+  color: #fce7f3; border: 1px solid rgba(244,114,182,.45);
+  border-radius: 6px; padding: 5px 10px;
+  font: 600 10px/1 'JetBrains Mono', monospace;
+}
+button.sc-shell-pixi-btn:hover { filter: brightness(1.1); color: #fff; }
+
+/* Pause menu: return to vendored Pixi 2D (mouse is free here) */
+#pauseGoPixi,
+button.pause-pixi {
+  grid-column: 1 / -1;
+  background: linear-gradient(135deg, #be185d, #7c3aed) !important;
+  border: 1px solid rgba(244,114,182,.55) !important;
+  color: #fff !important;
+  font-weight: 700 !important;
+  letter-spacing: .04em;
+  padding: 14px 12px !important;
+  margin-top: 4px;
+}
+#pauseGoPixi:hover,
+button.pause-pixi:hover { filter: brightness(1.08); }

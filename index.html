@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -37,7 +37,7 @@
             <div><b>SPACE</b> jump</div><div><b>E</b> interact</div><div><b>TAB</b> city panels</div>
             <div><b>M</b> minimap</div><div><b>T</b> auto-tour</div><div><b>Ctrl+D</b> / <b>`</b> terminal</div>
             <div><b>O</b> orbit</div><div><b>X</b> x-ray</div><div><b>H</b> holomap</div>
-            <div><b>F</b> lift floor</div><div><b>ESC</b> pause</div>
+            <div><b>F</b> lift floor</div><div><b>V</b> city map</div><div><b>P</b> 2D city</div><div><b>ESC</b> pause</div>
         </div>
         <div class="start-opts">
             <label>Quality
@@ -68,11 +68,11 @@
         <div id="hudIndex" title="Global AI Index">AI INDEX <b>512</b></div>
         <div id="hudPop" title="Citizens">POP <b>0</b></div>
     </div>
-    <canvas id="minimap" width="200" height="170" class="hidden"></canvas>
+    <canvas id="minimap" width="260" height="220" class="hidden"></canvas>
     <div id="questTracker" class="hidden"></div>
     <div id="toasts"></div>
     <div id="tourCaption" class="hidden"></div>
-    <div id="hintBar">TAB panels · M map · T tour · Ctrl+D terminal · O/X/H modes · ESC menu</div>
+    <div id="hintBar">ESC pause/mouse · <b>P</b> 2D city · V overview · TAB panels · M map · T tour · Ctrl+D terminal</div>
 </div>
 
 <!-- ═══ PANEL OVERLAY (pause menu + all data panels) ═══ -->
@@ -100,8 +100,9 @@
             <button data-panel="compare">⚖️ Compare</button>
             <button data-panel="map">🗺️ City Map</button>
             <button data-panel="settings">⚙️ Settings</button>
+            <button type="button" id="pauseGoPixi" class="pause-pixi">🗺 2D City (Pixi)</button>
         </div>
-        <div class="pause-foot">ESC / TAB to resume</div>
+        <div class="pause-foot">ESC / TAB to resume · <b>P</b> jumps to 2D City anytime (even while looking)</div>
     </div>
 </div>
 

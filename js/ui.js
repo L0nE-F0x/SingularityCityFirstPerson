@@ -1,10 +1,11 @@
-/* ══════════════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════════════
    UI — HUD (clock, weather, district, AI index), banners, toasts, minimap,
    pause menu, and every data panel: building/citizen cards, census,
    leaderboard, quests, achievements, newspaper, calendar, compute, costs,
    family tree, compare, city map, settings.
    ══════════════════════════════════════════════════════════════════════════ */
 import { G, clockString, CITY_W, CITY_D, CELL_W, CELL_D } from './state.js';
+import { CityStore } from './store/city_store.js';
 import {
     LABS, BM_M, SEED, ROSTER, COSTS, CTX, FAMILIES, AI_EVENTS, SUPPLY_CHAIN,
     COMPUTE_DATA, ACHIEVEMENTS, QUESTS, NEWS, CONFERENCES, activeConference,
@@ -45,6 +46,14 @@ export const UI = {
         document.querySelectorAll('#pauseMenu [data-panel]').forEach(btn => {
             btn.onclick = () => { this.hidePause(); this.showPanel(btn.dataset.panel); };
         });
+        const goPixiBtn = document.getElementById('pauseGoPixi');
+        if (goPixiBtn) {
+            goPixiBtn.onclick = () => {
+                this.hidePause();
+                if (G.shell?.goPixi) G.shell.goPixi();
+                else if (window.Shell?.goPixi) window.Shell.goPixi();
+            };
+        }
 
         document.addEventListener('keydown', e => {
             if (!G.started) return;
@@ -61,6 +70,12 @@ export const UI = {
                 this.els.minimap.classList.toggle('hidden');
             }
             if (e.code === 'KeyT' && !G.panelOpen) G.tour.toggle();
+            // P = hard-swap to vendored Pixi 2D (works under pointer lock; no mouse click needed)
+            if (e.code === 'KeyP' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
+                e.preventDefault();
+                if (G.shell?.goPixi) G.shell.goPixi();
+                else if (window.Shell?.goPixi) window.Shell.goPixi();
+            }
         });
 
         // konami
@@ -150,6 +165,7 @@ export const UI = {
         const prev = this.aiIndex;
         this.aiIndex = Math.min(1000, Math.round(score + Math.sin(Date.now() / 8e5) * 14));
         this.aiDelta = this.aiIndex - prev;
+        CityStore.patch({ aiIndex: this.aiIndex, aiDelta: this.aiDelta });
         G.world.aiBoard?.draw(this.aiIndex, this.aiDelta);
     },
 
@@ -164,28 +180,102 @@ export const UI = {
 
     // ── MINIMAP ─────────────────────────────────────────────────────
     _drawMinimap() {
-        const c = this.mm, W = 200, H = 170;
-        const sx = W / (CITY_W + 1200), sz = H / (CITY_D + 1200);
-        const px2mx = x => (x + CITY_W / 2 + 600) * sx;
-        const pz2mz = z => (z + CITY_D / 2 + 600) * sz;
+        const c = this.mm, W = this.els.minimap?.width || 260, H = this.els.minimap?.height || 220;
+        // world → map (tight framing so cells are readable)
+        const pad = 280;
+        const sx = W / (CITY_W + pad * 2), sz = H / (CITY_D + pad * 2);
+        const mx = x => (x + CITY_W / 2 + pad) * sx;
+        const mz = z => (z + CITY_D / 2 + pad) * sz;
         c.clearRect(0, 0, W, H);
-        c.fillStyle = '#0a0e1a'; c.fillRect(0, 0, W, H);
-        for (const d of City.districts) {
-            const col = '#' + d.biomeDef.ground.toString(16).padStart(6, '0');
+        // night panel + subtle vignette
+        c.fillStyle = '#070b14'; c.fillRect(0, 0, W, H);
+        // sea west
+        c.fillStyle = '#0c1f33';
+        c.fillRect(0, 0, mx(-CITY_W / 2 - 40), H);
+        c.fillStyle = 'rgba(34, 211, 238, 0.08)';
+        c.fillRect(0, 0, mx(-CITY_W / 2 - 40), H);
+        // districts
+        for (const d of City.districts || []) {
+            const x0 = mx(d.cx - CELL_W / 2), z0 = mz(d.cz - CELL_D / 2);
+            const dw = CELL_W * sx, dh = CELL_D * sz;
+            const col = '#' + (d.biomeDef?.ground ?? 0x1a2332).toString(16).padStart(6, '0');
             c.fillStyle = col;
-            c.globalAlpha = 0.75;
-            c.fillRect(px2mx(d.cx - CELL_W / 2), pz2mz(d.cz - CELL_D / 2), CELL_W * sx, CELL_D * sz);
+            c.globalAlpha = 0.92;
+            c.fillRect(x0, z0, dw, dh);
             c.globalAlpha = 1;
+            // visited outline
+            if (G.visitedDistricts?.[d.id]) {
+                c.strokeStyle = 'rgba(74,222,128,0.65)';
+                c.lineWidth = 1.2;
+                c.strokeRect(x0 + 0.5, z0 + 0.5, dw - 1, dh - 1);
+            } else {
+                c.strokeStyle = 'rgba(255,255,255,0.08)';
+                c.lineWidth = 0.6;
+                c.strokeRect(x0, z0, dw, dh);
+            }
         }
-        // player
-        const p = G.camera.position;
-        c.fillStyle = '#fff';
-        c.beginPath(); c.arc(px2mx(p.x), pz2mz(p.z), 3.4, 0, 7); c.fill();
-        c.strokeStyle = '#22d3ee'; c.lineWidth = 1.6;
+        // road grid
+        c.strokeStyle = 'rgba(148,163,184,0.35)';
+        c.lineWidth = 1.1;
         c.beginPath();
-        c.moveTo(px2mx(p.x), pz2mz(p.z));
-        c.lineTo(px2mx(p.x - Math.sin(G.player.yaw) * 300), pz2mz(p.z - Math.cos(G.player.yaw) * 300));
+        for (const r of City.roads || []) {
+            if (r.vertical) {
+                c.moveTo(mx(r.x), mz(r.z - r.d / 2));
+                c.lineTo(mx(r.x), mz(r.z + r.d / 2));
+            } else {
+                c.moveTo(mx(r.x - r.w / 2), mz(r.z));
+                c.lineTo(mx(r.x + r.w / 2), mz(r.z));
+            }
+        }
         c.stroke();
+        // buildings as small blocks
+        c.fillStyle = 'rgba(226,232,240,0.55)';
+        for (const p of G.placements || []) {
+            if (p.x == null) continue;
+            const s = Math.max(1.2, Math.min(p.w, p.d) * sx * 0.12);
+            c.fillRect(mx(p.x) - s / 2, mz(p.z) - s / 2, s, s);
+        }
+        // lab HQs highlighted
+        for (const p of G.placements || []) {
+            if (!p.b?.lab) continue;
+            c.fillStyle = (LABS[p.b.lab]?.color) || '#22d3ee';
+            c.beginPath(); c.arc(mx(p.x), mz(p.z), 2.2, 0, Math.PI * 2); c.fill();
+        }
+        // district short labels — current district always, visited otherwise
+        const here = G.districtAt?.id;
+        c.font = '8px JetBrains Mono, monospace';
+        c.textAlign = 'center';
+        c.textBaseline = 'middle';
+        for (const d of City.districts || []) {
+            const raw = (d.label || d.id || '').replace(/^[^A-Za-z0-9]+/, '');
+            const short = raw.split(/\s+/).slice(0, 2).join(' ');
+            const focus = d.id === here;
+            c.fillStyle = focus ? '#f8fafc' : 'rgba(203,213,225,0.55)';
+            if (focus || G.visitedDistricts?.[d.id]) c.fillText(short.slice(0, 14), mx(d.cx), mz(d.cz));
+        }
+        // player + facing wedge
+        const p = G.camera.position;
+        const yaw = G.player?.yaw ?? 0;
+        const px = mx(p.x), pz = mz(p.z);
+        c.save();
+        c.translate(px, pz);
+        c.rotate(-yaw); // yaw: 0 looks -Z in three; map z increases down
+        c.fillStyle = '#22d3ee';
+        c.beginPath();
+        c.moveTo(0, -7); c.lineTo(5, 5); c.lineTo(0, 2); c.lineTo(-5, 5);
+        c.closePath(); c.fill();
+        c.strokeStyle = '#fff'; c.lineWidth = 1; c.stroke();
+        c.restore();
+        // frame + legend
+        c.strokeStyle = 'rgba(34,211,238,0.45)';
+        c.lineWidth = 1.5;
+        c.strokeRect(0.5, 0.5, W - 1, H - 1);
+        c.fillStyle = 'rgba(7,11,20,0.75)';
+        c.fillRect(4, H - 16, 92, 12);
+        c.fillStyle = '#94a3b8';
+        c.font = '8px JetBrains Mono, monospace';
+        c.textAlign = 'left';
+        c.fillText('YOU · roads · HQs', 6, H - 7);
     },
 
     // ── PAUSE ───────────────────────────────────────────────────────
@@ -430,22 +520,25 @@ export const UI = {
 
     // ── newspaper ───────────────────────────────────────────────────
     _pNewspaper() {
+        const snap = CityStore.getSnapshot();
+        const wire = (snap.news && snap.news.length) ? snap.news : NEWS;
         const today = new Date();
         const dateStr = today.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
         const week = Math.floor((today - new Date('2025-01-01')) / (7 * 864e5));
-        const lead = NEWS[(week + today.getDate()) % NEWS.length].headline;
-        const others = NEWS.filter(n => n.headline !== lead).slice(0, 6);
+        const lead = wire[(week + today.getDate()) % wire.length].headline;
+        const others = wire.filter(n => n.headline !== lead).slice(0, 6);
         const leader = [...SEED].filter(m => m.benchmarks?.ELO).sort((a, b) => b.benchmarks.ELO - a.benchmarks.ELO)[0];
         const ac = activeConference();
+        const liveTag = snap.live?.online ? 'LIVE WIRE' : (snap.source === 'offline' ? 'STATIC DESK' : 'CACHED WIRE');
         return `<div class="np">
             <div class="np-mast">
                 <div class="k">⚙ EST. 2025 ⚙</div>
                 <div class="t">SINGULARITY CITY TIMES</div>
-                <div class="d">${dateStr.toUpperCase()} · VOL. ${Math.floor(week / 52) + 1} NO. ${week % 52 + 1} · ALL THE NEWS, NEURALLY FIT TO PRINT</div>
+                <div class="d">${dateStr.toUpperCase()} · VOL. ${Math.floor(week / 52) + 1} NO. ${week % 52 + 1} · ${liveTag}</div>
             </div>
             <h1>${lead}</h1>
             <div style="display:grid;grid-template-columns:2fr 1fr;gap:26px">
-                <div><h3>WIRE HEADLINES</h3><ul>${others.map(n => `<li>${n.headline}</li>`).join('')}</ul></div>
+                <div><h3>WIRE HEADLINES</h3><ul>${others.map(n => `<li>${n.url && n.url !== '#' ? `<a href="${n.url}" target="_blank" rel="noopener">${n.headline}</a>` : n.headline}${n.source ? ` <span style="opacity:.55">(${n.source})</span>` : ''}</li>`).join('')}</ul></div>
                 <div><h3>CITY DESK</h3><ul>
                     <li>Population hits ${G.citizens.list.length} models</li>
                     <li>AI Index at ${Math.round(this.aiIndex)} (${this.aiDelta >= 0 ? '+' : ''}${Math.round(this.aiDelta)})</li>
@@ -559,7 +652,7 @@ export const UI = {
     // max-height keeps the whole grid on screen — at width:100% the bottom
     // row of districts fell outside the panel and you had to scroll for it
     _pMap() { return `<div class="ov-title">🗺️ CITY MAP</div><canvas id="bigMap" width="780" height="640" style="max-width:100%;max-height:58vh;display:block;margin:0 auto;border:1px solid var(--bd);border-radius:4px"></canvas>
-        <div class="d" style="color:var(--t3);font-size:11px;margin-top:8px">You are the white dot. Sea to the west, Space Zone north-west, Underground south-west.</div>`; },
+        <div class="d" style="color:var(--t3);font-size:11px;margin-top:8px">Cyan arrow = you. Roads grey. Lab HQs coloured. Green outline = visited. Sea west · Space NW · Underground SW.</div>`; },
     _drawBigMap() {
         const cv = $('bigMap');
         if (!cv) return;
@@ -569,23 +662,59 @@ export const UI = {
         const mz = z => (z + CITY_D / 2 + 800) * sz;
         c.fillStyle = '#070b14'; c.fillRect(0, 0, W, H);
         // sea
-        c.fillStyle = '#12283e';
+        c.fillStyle = '#0c1f33';
         c.fillRect(0, 0, mx(-CITY_W / 2 - 100), H);
         for (const d of City.districts) {
             c.fillStyle = '#' + d.biomeDef.ground.toString(16).padStart(6, '0');
             c.fillRect(mx(d.cx - CELL_W / 2), mz(d.cz - CELL_D / 2), CELL_W * sx, CELL_D * sz);
-            c.fillStyle = G.visitedDistricts[d.id] ? '#e2e8f0' : '#5a6480';
+            if (G.visitedDistricts[d.id]) {
+                c.strokeStyle = 'rgba(74,222,128,0.55)';
+                c.lineWidth = 2;
+                c.strokeRect(mx(d.cx - CELL_W / 2) + 1, mz(d.cz - CELL_D / 2) + 1, CELL_W * sx - 2, CELL_D * sz - 2);
+            }
+            c.fillStyle = G.visitedDistricts[d.id] ? '#e2e8f0' : '#8b95a8';
             c.textAlign = 'center';
-            // "🖥️ Compute District" on one 10px line is wider than an 89px
-            // cell, so labels used to run across their neighbours — wrap the
-            // words to the cell instead
             this._mapLabel(c, d.label, mx(d.cx), mz(d.cz), CELL_W * sx - 8);
         }
+        // roads
+        c.strokeStyle = 'rgba(148,163,184,0.4)';
+        c.lineWidth = 1.4;
+        c.beginPath();
+        for (const r of City.roads || []) {
+            if (r.vertical) {
+                c.moveTo(mx(r.x), mz(r.z - r.d / 2));
+                c.lineTo(mx(r.x), mz(r.z + r.d / 2));
+            } else {
+                c.moveTo(mx(r.x - r.w / 2), mz(r.z));
+                c.lineTo(mx(r.x + r.w / 2), mz(r.z));
+            }
+        }
+        c.stroke();
+        // building footprints
+        c.fillStyle = 'rgba(226,232,240,0.4)';
+        for (const p of G.placements || []) {
+            if (p.x == null) continue;
+            const s = Math.max(1.5, Math.min(p.w, p.d) * sx * 0.1);
+            c.fillRect(mx(p.x) - s / 2, mz(p.z) - s / 2, s, s);
+        }
+        for (const p of G.placements || []) {
+            if (!p.b?.lab) continue;
+            c.fillStyle = LABS[p.b.lab]?.color || '#22d3ee';
+            c.beginPath(); c.arc(mx(p.x), mz(p.z), 3.5, 0, Math.PI * 2); c.fill();
+        }
+        // player
         const p = G.camera.position;
-        c.fillStyle = '#fff';
-        c.beginPath(); c.arc(mx(p.x), mz(p.z), 5, 0, 7); c.fill();
-        c.strokeStyle = '#22d3ee'; c.lineWidth = 2;
-        c.beginPath(); c.arc(mx(p.x), mz(p.z), 8, 0, 7); c.stroke();
+        const yaw = G.player?.yaw ?? 0;
+        const px = mx(p.x), pz = mz(p.z);
+        c.save();
+        c.translate(px, pz);
+        c.rotate(-yaw);
+        c.fillStyle = '#22d3ee';
+        c.beginPath();
+        c.moveTo(0, -10); c.lineTo(7, 8); c.lineTo(0, 3); c.lineTo(-7, 8);
+        c.closePath(); c.fill();
+        c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.stroke();
+        c.restore();
     },
 
     // word-wrap a district label into its cell, shrinking a step if a single
@@ -651,6 +780,10 @@ export const UI = {
                 <tr><td>Progress</td><td><button id="setReset" class="btn">🗑 Reset save</button></td></tr>
             </table>
             <div class="lbl">Controls</div>
-            <div class="d" style="font-size:12px;color:var(--t3)">WASD move · Shift sprint · Space jump · E interact · TAB panels · M minimap · T auto-tour · ESC pause/release mouse</div>`;
+            <div class="d" style="font-size:12px;color:var(--t3)">WASD move · Shift sprint · Space jump · E interact · TAB panels · M minimap · T tour · <b>P</b> 2D city · ESC pause/release mouse</div>`;
     }
 };
+
+
+
+

@@ -1,100 +1,81 @@
 # Parity with the production 2D app
 
-Tracking what the first-person port covers vs. `ApexForge/SingularityCity`
-(the read-only production city, ~102 files, ~63K lines). This is a multi-session
-program — the original is a very large game. Updated 2026-07-23 (full backlog pass).
+Tracking first-person vs production `ApexForge/SingularityCity` (read-only).  
+**Updated:** 2026-07-26 evening (destination parity + skyline).
 
-## ✅ Present in first-person
+**North star:** switching FP ↔ 2D should feel like **same city, different camera**.  
+You should be able to go **anywhere** you can go in the 2D app.
 
-- 20 districts on a grid, ~90 buildings + 16 datacenters, quadrant clusters
-- ~170–340 model citizens on the `getAct()` daily schedule, named models + founders
-- Weather (rain/snow/thunder/fog/cherry) + day-night + aurora + stars
-- Trams (elevated viaduct), news blimps, helicopter, rocket launches
-- 12 data panels (census, leaderboard, quests, achievements, newspaper,
-  calendar, compute, costs, family, compare, map, settings)
-- Auto-tour (T), 26 quests, 29+ achievements, konami/caturday eggs
-- **Walk-in interiors** (lobby per building, type-dressed) — FP addition
-- **Real streets** — carriageways, lane markings, kerbed sidewalks, traffic
-  signals, cars on the right in lanes, pedestrians on pavements — FP addition
-- **Chat bubbles over citizens** (ported CHAT_MSGS) — added 2026-07-23
-- **Street vendors** (6 food carts) — added 2026-07-23
-- **Bird flocks** (3 flocks, V-formation, wing-flap shader, scatter) — 2026-07-23
-- **City-wide power lines** (utility poles + sagging catenary wires) — 2026-07-23
-- **Nvidia supply-chain delivery truck** (Port → fab → HQ loop) — 2026-07-23
-- **Citizen of the Day** + paparazzi entourage, crown, press chat, HUD card — 2026-07-23
-- Building signage: wall-mounted boxes + ground pylon signs; concrete detail
-  texture on specialty structures
-- **VC deal-flow**, research-paper envelopes, distinct NPC aging looks
-- **Metro** rolling stock on 3 lines, jail & court systems, multi-floor interiors
-- **Modes**: orbit (O), x-ray (X), holomap (H), terminal (Ctrl+D / `)
-- Conference + seasonal accents, Kardashev billboard, rain wetness, ghost cursors
+---
 
-## 🚗 Corrected
+## Owner backlog (open — from 2026-07-23 playtest)
 
-- **Cars**: the original runs essentially ONE delivery truck (Port → Nvidia
-  fab → HQ), not a traffic sim. FP had 56–90; cut to 6–16 ambient cars.
+These override stale “[x] done” claims elsewhere when they conflict with lived experience.
 
-## ❌ Missing — the backlog, roughly by first-person impact
+### Mobility
+- [x] **Board and ride metro trains** (street or platform → ride → alight) — 2026-07-26
+- [x] **Real elevators** — F / digits 0–9 / E at lift; floors from building storeys — 2026-07-26
+- [x] Full destination parity with 2D enterable spaces (themed rooms for all major 2D interior routes) — 2026-07-26
 
-### Aliveness / street life
-- [x] Bird flocks (V-formation, flap, scatter) — `birds.js`
-- [x] Power lines: utility poles + sagging wires — in `world.js` `_buildProps`
-- [x] Nvidia supply-chain delivery truck (Port → fab → HQ) — `traffic.js`
-- [x] Goal-driven citizen archetypes (~20%: gym rats, foodies, bar regulars,
-      bookworms, joggers, coffee addicts, night owls) — `citizens.js` ARCHETYPES
-- [x] VC deal-flow (partners travel to HQs, handshake animations) — `vc_dealflow.js`
-- [x] Research-paper envelopes delivered to labs — `research_papers.js`
-- [x] Citizen of the Day + paparazzi entourage — `citizen_of_day.js` (crown sprite, 3 paparazzi in commute windows, flashes, press bubbles, HUD card + Track)
-- [x] NPC aging visuals (baby/kid/rumored distinct looks) — `citizens.js` aStage morphs + pacifier/backpack/aura (not size-only)
+### Aliveness / characters
+- [x] **Commuter schedules** reworked (band re-assign + founder schedule) — *verify feel in playtest* — 2026-07-26
+- [x] **Founders / CEOs** larger, door slots, CEO schedule — *verify feel* — 2026-07-26
+- [x] **Founder helicopters** per lab orbiting HQ — 2026-07-26
+- [x] **Founders visible inside VIP cars** (occupant heads, gold plate) — 2026-07-26
 
-### Distinct interiors — DONE (9 themed types + specialized rooms, `interior.js`)
-Each building type now gets its own palette, light mood and signature
-centrepiece (3 draw calls per interior):
-- [x] **datacenter/fab** — cold server hall, blinking LED rack columns
-- [x] **bar** — dark neon bar, glowing bottles, dance floor
-- [x] **home** (housing/villa/cabin) — warm living room, TV, bookshelf, plant
-- [x] **robotics** — factory floor, conveyor, robot arm, safety lines
-- [x] **longevity** — clinical bio-lab, vial racks, DNA double-helix
-- [x] **academic** (university) — library, bookshelves, reading tables
-- [x] **press** (newspaper) — printing press + paper stacks
-- [x] **warehouse/metro** — shelving racks + crates
-- [x] **office** (hq/vc/agents/embassy/generic) — corporate lobby
-- [x] Remaining nuance from the 2D app: multi-floor interiors behind the lift
-      (F / lift bank), per-country embassy detailing, jail/court rooms,
-      space mission-control, power-plant control rooms — `interior.js` themes
-      + `jail.js` / `court.js`
+### Streets
+- [x] Fix **sidewalks/kerbs in the middle of intersections** (2026-07-23) — kerbs are now segmented around every crossing carriageway in `City.sidewalkSegments()`; `tests/street_check.mjs` asserts no kerb overlaps a carriageway. *Verify feel in a human playtest.*
+- [x] **Lane markings** follow road direction correctly (2026-07-23) — dashes/edges already axis-correct; edge lines now also stop at junctions instead of running white lines straight across the crossing carriageway.
+- [x] **Traffic lights** present and readable at junctions (2026-07-23) — `signals.js`: mast-arm 3-lens heads at every avenue×street junction, driven from the same two-phase cycle the cars obey. Confirmed in a headless screenshot.
+- [x] Traffic density honest to 2D (done earlier — 6/10/16 ambient cars + one Nvidia truck)
 
-### Big modes / systems
-- [x] **Terminal mode** (`D` / Ctrl+D / `) — Bloomberg-style data terminal — `terminal.js`
-- [x] Orbit mode — LEO satellite view — `orbit_mode.js` (O)
-- [x] X-ray mode — wireframe diagnostic overlay — `xray_mode.js` (X)
-- [x] 3D holomap — `holomap.js` (H)
-- [x] Metro system (3 lines from `TRAM_LINES`, stations) — `metro.js`
-- [x] Jail & Court systems — `jail.js`, `court.js`
-- [x] Conference events, seasonal events — `conference.js`, `seasonal.js`
-- [x] Kardashev / richer AI-index billboard — `kardashev.js`
+### Interiors / fidelity
+- [x] **Interior props quality** pass (richer lobbies, lifts, Standard materials, fill light) — ongoing polish welcome — 2026-07-26
+- [x] Exterior materials/skyline polish (setbacks, ledges, crowns, Phong glass facades) — 2026-07-26
 
-### Content / fidelity
-- [x] 10 weather states (clear · partly cloudy · overcast · fog · drizzle ·
-      rain · thunderstorm · snow · cherry · autumn leaves) — `weather.js`
-- [x] 5 climate zones from timezone (tropical/arid/temperate/continental/polar)
-      biasing the Markov chain; `localStorage.sc_climate` override — `weather.js`
-- [x] Rain puddles / wetness / ground-splash / neon reflections — `wetness.js`
-- [ ] Live API pipelines (deliberate scope cut — FP uses static `data.js`)
-- [x] Multiplayer ghost cursors — `multiplayer.js` (local simulated peers; no network backend)
+### Multiplayer
+- [x] **No fake ghost peers** when offline (removed 2026-07-23)
+- [ ] Real multiplayer only when a real backend exists
 
-## Deliberate non-goals (unchanged)
+---
 
-- Live APIs / Supabase — FP uses static fallback data by design
-- Orbit/overview camera as the primary mode — FP is first-person + auto-tour
-  (orbit is a toggleable mode, not the default)
+## Present in first-person (approximate)
+
+- 20 districts, ~90 buildings + datacenters, quadrant layout
+- Instanced citizens (schedule *implemented* but **owner reports it doesn’t feel right**)
+- Weather + day/night + aurora + soft circular stars
+- **Underground metro rolling stock** (not elevated) — **not yet boardable by player**
+- 12 data panels, quests, achievements, auto-tour
+- Walk-in interiors (themed) — **props need fidelity**; elevators incomplete
+- Streets with carriageways/markings/sidewalks + **traffic lights**; junction kerbs fixed (2026-07-23)
+- Chat bubbles, vendors, birds, power lines, supply truck, COTD, VC deal-flow, papers
+- Modes: orbit / x-ray / holomap / terminal
+- Integrated dual-view: vendored `pixi/` + FP root + CityStore / live news shell
+
+## Corrected earlier
+
+- Ambient car count reduced toward pedestrian city (not 90-car freeway)
+- Elevated tram viaduct removed (parity with underground metro)
+- Fake multiplayer cones removed
+
+## Deliberate non-goals (for now)
+
+- Live model-scan / full Supabase write path in FP (static `data.js` + soft live news)
+- Dual warm Pixi+Three in one page (hard-swap only)
+- Editing production ApexForge tree
 
 ## Controls (modes)
 
 | Key | Mode |
 |-----|------|
-| Ctrl+D or ` | Data terminal (D alone remains WASD strafe) |
-| O | Orbit LEO view |
-| X | X-ray wireframe |
-| H | Holomap hologram |
-| F | Next interior floor (when multi-floor) |
+| Ctrl+D or \` | Data terminal |
+| O | Orbit LEO |
+| X | X-ray |
+| H | Holomap |
+| F | Interior floor (partial) |
+| P | Hard-swap to 2D City |
+| V | FP shell city map |
+
+---
+
+*When closing a backlog item, verify against production 2D behaviour, not only unit smoke tests.*

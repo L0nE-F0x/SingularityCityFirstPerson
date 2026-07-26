@@ -1,4 +1,10 @@
-# Handoff — Singularity City: First Person
+﻿# Handoff — Singularity City: First Person
+
+> **STATUS SUPERSEDED (2026-07-23):** Live status is `RESUME.md` + `PARITY.md` (owner backlog).  
+> This file remains useful for **perf doctrine**, agent testing traps, and bug archaeology.  
+> Mid-file line counts / “deliberate simplifications” are outdated after parity + polish passes.
+
+---
 
 **For the next AI model picking this up.** Written 2026-07-22 at the end of the
 build session that created this project. Read this whole file before touching
@@ -419,4 +425,5 @@ Cleared remaining PARITY.md checkboxes except deliberate non-goals (live APIs).
 ---
 
 **Integration roadmap (2026-07-23):** see `INTEGRATION.md` (CityStore + FP/Pixi toggle; do not implement until owner starts that work).
+
 

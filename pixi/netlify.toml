@@ -1,0 +1,95 @@
+[build]
+  command = "npm install && node tools/build.mjs"
+  publish = "."
+
+[functions]
+  directory = "netlify/functions"
+
+# ─── CORS PROXY: Route API calls through Netlify to bypass CORS ───
+[[redirects]]
+  from = "/api/hf/*"
+  to = "https://huggingface.co/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/zeroeval/*"
+  to = "https://api.zeroeval.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/openrouter/*"
+  to = "https://openrouter.ai/api/v1/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/arxiv/*"
+  to = "https://export.arxiv.org/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/celestrak/*"
+  to = "https://celestrak.org/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/orbit-sats"
+  to = "/.netlify/functions/orbit-sats"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/geo"
+  to = "/.netlify/functions/geo"
+  status = 200
+  force = true
+
+
+# No X-Frame-Options + `frame-ancestors *` — embedding is a FEATURE (embed.html
+# redirects to index.html?embed=1, so index.html itself must be frameable anywhere).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.rss2json.com https://finnhub.io https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://api.x.ai https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://ll.thespacedevs.com https://huggingface.co https://api.zeroeval.com https://openrouter.ai https://api.coingecko.com https://export.arxiv.org https://celestrak.org; img-src 'self' data:; worker-src 'self'; frame-ancestors *"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Content-Type = "application/javascript; charset=utf-8"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# The service worker must never be long-cached: a stale sw.js means users can be
+# pinned to an old CACHE_NAME for up to a year on browsers that honor HTTP cache
+# for SW scripts. Overrides the /*.js immutable rule above (more specific path wins).
+[[headers]]
+  for = "/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Content-Type = "text/css; charset=utf-8"
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.html"
+  [headers.values]
+    Content-Type = "text/html; charset=utf-8"
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/*.png"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/*.ico"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"

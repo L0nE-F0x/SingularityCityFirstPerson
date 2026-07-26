@@ -184,7 +184,7 @@ export const World = {
         }
         // Outskirts green ring inside the perimeter road
         const tilesMesh = new THREE.Mesh(mergeGeometries(tiles, false),
-            new THREE.MeshLambertMaterial({ vertexColors: true }));
+            new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
         tilesMesh.matrixAutoUpdate = false;
         scene.add(tilesMesh);
 
@@ -236,24 +236,18 @@ export const World = {
 
     // Raised, kerbed sidewalks down both sides of every road — one merged
     // mesh. Boxes rather than planes so the kerb has an actual face; that
-    // edge is most of what makes a street read as a street.
+    // edge is most of what makes a street read as a street. The segments come
+    // from City.sidewalkSegments(), which breaks each kerb around the
+    // carriageways that cross it (see there) so no sidewalk runs across a
+    // junction — the "sidewalks in the middle of the road" bug.
     _buildSidewalks(scene) {
         const geos = [];
-        for (const r of City.roads) {
-            if (r.sidewalk <= 0) continue;
-            const off = r.carriage / 2 + r.sidewalk / 2;
-            for (const side of [-1, 1]) {
-                const w = r.vertical ? r.sidewalk : r.w;
-                const d = r.vertical ? r.d : r.sidewalk;
-                const g = new THREE.BoxGeometry(w, KERB_H, d);
-                g.translate(
-                    r.x + (r.vertical ? side * off : 0),
-                    KERB_H / 2,
-                    r.z + (r.vertical ? 0 : side * off));
-                const uv = g.attributes.uv;
-                for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * w / 40, uv.getY(i) * d / 40);
-                geos.push(g);
-            }
+        for (const s of City.sidewalkSegments()) {
+            const g = new THREE.BoxGeometry(s.w, KERB_H, s.d);
+            g.translate(s.x, KERB_H / 2, s.z);
+            const uv = g.attributes.uv;
+            for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * s.w / 40, uv.getY(i) * s.d / 40);
+            geos.push(g);
         }
         if (!geos.length) return;
         const m = new THREE.Mesh(mergeGeometries(geos, false),
@@ -282,14 +276,32 @@ export const World = {
             const len = r.vertical ? r.d : r.w;
             const along = r.vertical ? r.z : r.x;
             const cross = crossOf(r).filter(c => Math.abs(c - along) <= len / 2 + 200);
-            const junction = (t) => cross.some(c => Math.abs(t - c) < CARRIAGE.main / 2 + 26);
+            const HB = CARRIAGE.main / 2 + 26;
+            const junction = (t) => cross.some(c => Math.abs(t - c) < HB);
             const start = along - len / 2, end = along + len / 2;
 
-            // solid edge lines, full length
+            // clear spans = the road length minus every junction box. Lane lines
+            // only get painted here — a solid edge line running straight across
+            // an intersecting carriageway is what reads as "markings in the
+            // wrong direction" at a junction, so nothing paints through the box.
+            const blocked = cross.map(c => [c - HB, c + HB]).sort((a, b) => a[0] - b[0]);
+            const clear = [];
+            let cur = start;
+            for (const [b0, b1] of blocked) {
+                if (b0 > cur) clear.push([cur, Math.min(b0, end)]);
+                cur = Math.max(cur, b1);
+            }
+            if (cur < end) clear.push([cur, end]);
+
+            // solid edge lines, segmented around the junctions
             for (const side of [-1, 1]) {
                 const o = side * (r.carriage / 2 - 3);
-                if (r.vertical) mark(r.x + o, r.z, 3, len, 0xe8e8e0);
-                else mark(r.x, r.z + o, len, 3, 0xe8e8e0);
+                for (const [s0, s1] of clear) {
+                    const segLen = s1 - s0, m = (s0 + s1) / 2;
+                    if (segLen < 4) continue;
+                    if (r.vertical) mark(r.x + o, m, 3, segLen, 0xe8e8e0);
+                    else mark(m, r.z + o, segLen, 3, 0xe8e8e0);
+                }
             }
             // centre dashes, skipping junctions
             const DASH = 34, GAPD = 30;
@@ -314,7 +326,7 @@ export const World = {
         }
         if (!geos.length) return;
         const m = new THREE.Mesh(mergeGeometries(geos, false),
-            new THREE.MeshLambertMaterial({ vertexColors: true }));
+            new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
         m.matrixAutoUpdate = false;
         scene.add(m);
     },
@@ -329,29 +341,57 @@ export const World = {
         const buckets = [[], [], []];
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish']);
 
+        // setbacks: upper tower mass on mid/high buildings (reads as a real skyline)
+        const setbacks = [];
+
         for (const p of G.placements) {
             const b = p.b;
+            if (b.type === 'metro') { this._buildMetroStation(p); continue; }
             if (OPEN.has(b.type)) { this._buildSpecialty(p); continue; }
-            const ti = (b.fl || 3) <= 2 ? 0 : (b.fl || 3) <= 5 ? 1 : 2;
-            buckets[ti].push(p);
+            const fl = b.fl || 3;
+            const ti = fl <= 2 ? 0 : fl <= 5 ? 1 : 2;
+            // multi-tier setbacks on taller towers (skyline silhouette)
+            if (fl >= 5 && p.h > FLOOR_H * 4) {
+                if (fl >= 10) {
+                    const h0 = p.h * 0.48, h1 = p.h * 0.28, h2 = p.h - h0 - h1;
+                    buckets[ti].push({ ...p, h: h0, _isBase: true });
+                    setbacks.push({ ...p, h: h1, w: p.w * 0.78, d: p.d * 0.78, y0: h0, _isSetback: true });
+                    setbacks.push({ ...p, h: h2, w: p.w * 0.52, d: p.d * 0.52, y0: h0 + h1, _isSetback: true, _crown: true });
+                } else {
+                    const baseH = p.h * (fl >= 8 ? 0.58 : 0.70);
+                    const topH = p.h - baseH;
+                    buckets[ti].push({ ...p, h: baseH, _isBase: true });
+                    setbacks.push({
+                        ...p,
+                        h: topH,
+                        w: p.w * (fl >= 8 ? 0.58 : 0.70),
+                        d: p.d * (fl >= 8 ? 0.58 : 0.70),
+                        y0: baseH,
+                        _isSetback: true
+                    });
+                }
+            } else {
+                buckets[ti].push(p);
+            }
         }
 
         const dummy = new THREE.Object3D();
-        buckets.forEach((list, ti) => {
+        const placeList = (list, ti, yOffset = 0) => {
             if (!list.length) return;
             const t = tiers[ti];
             const geo = new THREE.BoxGeometry(1, 1, 1);
             geo.translate(0, 0.5, 0);
-            const side = new THREE.MeshLambertMaterial({
+            const side = new THREE.MeshPhongMaterial({
                 map: t.facades.map, emissiveMap: t.facades.emissiveMap,
-                emissive: new THREE.Color(0xffd9a0), emissiveIntensity: 0
+                emissive: new THREE.Color(0xffd9a0), emissiveIntensity: 0,
+                shininess: 28, specular: 0x3a4558
             });
-            const roof = new THREE.MeshLambertMaterial({ color: 0x2e3440 });
+            const roof = new THREE.MeshPhongMaterial({ color: 0x2e3440, shininess: 12, specular: 0x1a1e24 });
             this.windowMats.push(side);
             const mats = [side, side, roof, roof, side, side];
             const im = new THREE.InstancedMesh(geo, mats, list.length);
             list.forEach((p, i) => {
-                dummy.position.set(p.x, 0, p.z);
+                dummy.position.set(p.x, (p.y0 || 0) + yOffset, p.z);
                 dummy.scale.set(p.w, p.h, p.d);
                 dummy.rotation.y = 0;
                 dummy.updateMatrix();
@@ -363,9 +403,81 @@ export const World = {
             scene.add(im);
             this.bldMeshes = this.bldMeshes || [];
             this.bldMeshes.push(im);
-        });
+        };
 
-        this._buildRoofs(scene, buckets.flat());
+        buckets.forEach((list, ti) => placeList(list, ti));
+        // setback tops use mid/high facade tier
+        if (setbacks.length) placeList(setbacks, 2);
+
+        // mid-belt ledge strip for taller masses — depth without per-building meshes
+        this._buildLedges(scene, [...buckets[1], ...buckets[2], ...setbacks]);
+        this._buildRoofs(scene, [
+            ...buckets.flat().map(p => ({ ...p, h: (p.y0 || 0) + p.h })),
+            ...setbacks.map(p => ({ ...p, h: (p.y0 || 0) + p.h }))
+        ]);
+    },
+
+    /** Horizontal belt ledges so facades read as stacked floors, not flat slabs. */
+    _buildLedges(scene, list) {
+        if (!list.length) return;
+        const spots = [];
+        for (const p of list) {
+            const h = (p.y0 || 0) + p.h;
+            if (h < FLOOR_H * 3) continue;
+            // belt ledges — denser on tall masses so towers read as stacked floors
+            const y = (p.y0 || 0) + p.h * 0.55;
+            spots.push({ x: p.x, y, z: p.z, w: p.w + 5, d: p.d + 5 });
+            if (h > FLOOR_H * 5) {
+                spots.push({ x: p.x, y: (p.y0 || 0) + p.h * 0.28, z: p.z, w: p.w + 4, d: p.d + 4 });
+            }
+            if (h > FLOOR_H * 9) {
+                spots.push({ x: p.x, y: (p.y0 || 0) + p.h * 0.78, z: p.z, w: p.w + 3, d: p.d + 3 });
+            }
+        }
+        if (!spots.length) return;
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        const im = new THREE.InstancedMesh(geo,
+            new THREE.MeshPhongMaterial({ color: 0x7a8494, shininess: 20, specular: 0x2a3038 }), spots.length);
+        const d = new THREE.Object3D();
+        spots.forEach((s, i) => {
+            d.position.set(s.x, s.y, s.z);
+            d.scale.set(s.w, 3.8, s.d);
+            d.updateMatrix();
+            im.setMatrixAt(i, d.matrix);
+        });
+        im.instanceMatrix.needsUpdate = true;
+        scene.add(im);
+    },
+
+    /** Street-level subway pavilion — not a generic office box. */
+    _buildMetroStation(p) {
+        const { x, z, w, d } = p;
+        const lineCol = 0x22d3ee;
+        // sunken plaza edge
+        sBox(w * 1.05, 3, d * 1.05, x, 1.5, z, 0x3a424e);
+        // pavilion shell
+        sBox(w * 0.72, 22, d * 0.55, x, 14, z, 0x4a5568);
+        // glass curtain walls (cyan-tinted blocks)
+        sBox(w * 0.66, 16, 2.2, x, 12, z + d * 0.26, 0x5ec8e8);
+        sBox(w * 0.66, 16, 2.2, x, 12, z - d * 0.26, 0x5ec8e8);
+        sBox(2.2, 16, d * 0.48, x + w * 0.34, 12, z, 0x5ec8e8);
+        sBox(2.2, 16, d * 0.48, x - w * 0.34, 12, z, 0x5ec8e8);
+        // roof canopy overhang
+        sBox(w * 0.88, 3, d * 0.72, x, 26, z, 0x2a3340);
+        // "M" totem / entrance pylon
+        sBox(8, 36, 8, x - w * 0.42, 18, z + d * 0.42, 0x1e293b);
+        sBox(10, 8, 10, x - w * 0.42, 38, z + d * 0.42, lineCol);
+        // escalator well — dark hole + side walls
+        sBox(w * 0.28, 2, d * 0.22, x + w * 0.08, 0.6, z, 0x0a0e14);
+        sBox(w * 0.3, 8, 2, x + w * 0.08, 4, z + d * 0.12, 0x334155);
+        sBox(w * 0.3, 8, 2, x + w * 0.08, 4, z - d * 0.12, 0x334155);
+        // handrail glow strip
+        sBox(w * 0.26, 1.2, 1.5, x + w * 0.08, 7, z + d * 0.12, lineCol);
+        sBox(w * 0.26, 1.2, 1.5, x + w * 0.08, 7, z - d * 0.12, lineCol);
+        // platform edge lights
+        for (const ox of [-0.2, 0, 0.2]) {
+            sBox(6, 1.5, 6, x + ox * w, 1.2, z + d * 0.38, lineCol);
+        }
     },
 
     /* Parapets and rooftop plant. Every building was a bare box cut off flat
@@ -380,49 +492,81 @@ export const World = {
         const capGeo = new THREE.BoxGeometry(1, 1, 1);
         capGeo.translate(0, 0.5, 0);
         const caps = new THREE.InstancedMesh(capGeo,
-            new THREE.MeshLambertMaterial({ color: 0x8a909c }), list.length);
+            new THREE.MeshPhongMaterial({ color: 0x9aa3b0, shininess: 22, specular: 0x333840 }), list.length);
         list.forEach((p, i) => {
             d.position.set(p.x, p.h, p.z);
-            d.scale.set(p.w + 5, 7, p.d + 5);
+            d.scale.set(p.w + 6, 8, p.d + 6);
             d.updateMatrix();
             caps.setMatrixAt(i, d.matrix);
         });
         caps.instanceMatrix.needsUpdate = true;
         scene.add(caps);
 
-        // plant: AC units, vents and water tanks, 0-4 per roof
-        const spots = [];
+        // Crown / antenna spires on the tallest setback tops (skyline punctuation)
+        const crownList = list.filter(p => p._crown || (p.h > FLOOR_H * 10 && (p.b?.fl || 0) >= 9));
+        if (crownList.length) {
+            const spireGeo = new THREE.BoxGeometry(1, 1, 1);
+            spireGeo.translate(0, 0.5, 0);
+            const spires = new THREE.InstancedMesh(spireGeo,
+                new THREE.MeshPhongMaterial({ color: 0xc0c8d4, shininess: 40, specular: 0x556070 }), crownList.length);
+            crownList.forEach((p, i) => {
+                d.position.set(p.x, p.h + 8, p.z);
+                d.scale.set(Math.max(6, p.w * 0.08), 28 + (p.b?.fl || 8) * 2, Math.max(6, p.d * 0.08));
+                d.updateMatrix();
+                spires.setMatrixAt(i, d.matrix);
+            });
+            spires.instanceMatrix.needsUpdate = true;
+            scene.add(spires);
+        }
+
+        // plant: AC units, water tanks, dish antennas, vents — variety on the skyline
+        const acSpots = [], tankSpots = [], dishSpots = [];
         for (const p of list) {
-            const n = p.w > 150 ? 4 : p.w > 90 ? 3 : 2;
+            const n = p.w > 150 ? 5 : p.w > 90 ? 4 : 2;
             for (let i = 0; i < n; i++) {
-                if (rng() < 0.22) continue;
-                spots.push({
-                    x: p.x + (rng() - 0.5) * (p.w - 30),
+                if (rng() < 0.18) continue;
+                const spot = {
+                    x: p.x + (rng() - 0.5) * Math.max(20, p.w - 28),
                     y: p.h + 7,
-                    z: p.z + (rng() - 0.5) * (p.d - 30),
-                    s: 0.7 + rng() * 0.9,
+                    z: p.z + (rng() - 0.5) * Math.max(20, p.d - 28),
+                    s: 0.65 + rng() * 0.95,
                     r: rng() * Math.PI
-                });
+                };
+                const roll = rng();
+                if (roll < 0.55) acSpots.push(spot);
+                else if (roll < 0.82) tankSpots.push(spot);
+                else dishSpots.push(spot);
             }
         }
-        if (!spots.length) return;
-        const unit = mergeGeometries([
+        const addPlant = (spots, geo) => {
+            if (!spots.length) return;
+            const plant = new THREE.InstancedMesh(geo,
+                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }), spots.length);
+            spots.forEach((s, i) => {
+                d.position.set(s.x, s.y, s.z);
+                d.scale.setScalar(s.s);
+                d.rotation.set(0, s.r, 0);
+                d.updateMatrix();
+                plant.setMatrixAt(i, d.matrix);
+            });
+            d.rotation.set(0, 0, 0);
+            plant.instanceMatrix.needsUpdate = true;
+            scene.add(plant);
+        };
+        addPlant(acSpots, mergeGeometries([
             paint(new THREE.BoxGeometry(16, 9, 12).translate(0, 4.5, 0), 0x9aa1ab),
             paint(new THREE.BoxGeometry(13, 1.6, 9).translate(0, 9.6, 0), 0x6e757f),
             paint(new THREE.CylinderGeometry(3.4, 3.4, 7, 8).translate(11, 3.5, 3), 0x878e98)
-        ], false);
-        const plant = new THREE.InstancedMesh(unit,
-            new THREE.MeshLambertMaterial({ vertexColors: true }), spots.length);
-        spots.forEach((s, i) => {
-            d.position.set(s.x, s.y, s.z);
-            d.scale.setScalar(s.s);
-            d.rotation.set(0, s.r, 0);
-            d.updateMatrix();
-            plant.setMatrixAt(i, d.matrix);
-        });
-        d.rotation.set(0, 0, 0);
-        plant.instanceMatrix.needsUpdate = true;
-        scene.add(plant);
+        ], false));
+        addPlant(tankSpots, mergeGeometries([
+            paint(new THREE.CylinderGeometry(7, 7, 14, 10).translate(0, 7, 0), 0x7a8494),
+            paint(new THREE.CylinderGeometry(7.6, 7.6, 1.4, 10).translate(0, 14.2, 0), 0x5a6470),
+            paint(new THREE.BoxGeometry(3, 4, 3).translate(0, 2, 0), 0x4a5360)
+        ], false));
+        addPlant(dishSpots, mergeGeometries([
+            paint(new THREE.CylinderGeometry(1.4, 2.2, 10, 6).translate(0, 5, 0), 0x6a7280),
+            paint(new THREE.SphereGeometry(6, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 12, 0), 0xb8c0cc)
+        ], false));
     },
 
     // Specialty structures — pushed into the STATIC bucket, animated parts kept live
@@ -623,90 +767,131 @@ export const World = {
 
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
-        // OPEN structures are shorter/irregular than their placeholder box
-        // height p.h, which is why signs pinned to p.h floated in the sky.
-        // Those get a ground-planted pylon sign; solid buildings get a lit
-        // box mounted flat on the street-facing wall above the entrance.
+        // Mount signs FLUSH on the street-facing facade (cardinal axis only).
+        // The old code offset from the building centre along a diagonal toward
+        // the district centre, which drove the board *through* the AABB — the
+        // empty black/cyan frames you saw clipping out of Meta / Redwood etc.
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
             'graveyard', 'billboard', 'monument', 'arena', 'black_market',
-            'nuclear', 'coal', 'dish']);
+            'nuclear', 'coal', 'dish', 'metro']);
+        // Skip pure outdoor props that don't need a branded wall sign
+        const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
+            'monument', 'solar', 'wind', 'dam']);
 
-        const signs = G.placements.map(p => {
+        const signs = [];
+        for (const p of G.placements) {
             const b = p.b;
+            if (NO_SIGN.has(b.type)) continue;
             const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
                 : b.type === 'black_market' ? '#f472b6'
                 : b.type === 'bar' ? '#e879f9'
                 : '#22d3ee';
             const label = b.id === 'black_market' ? 'THE UNDERGROUND' : b.name.toUpperCase();
-            return { id: b.id, text: label, emoji: b.emoji, color, p };
-        });
+            signs.push({ id: b.id, text: label, emoji: b.emoji, color, p });
+        }
+        if (!signs.length) { this.signCount = 0; return; }
+
         const { texture, uv } = TEX.signAtlas(signs);
-        const neonGeos = [];        // the emissive text planes
-        const structGeos = [];      // backing boxes + posts (lit, vertex-coloured)
+        const neonGeos = [];
+        const structGeos = [];
 
         for (const s of signs) {
             const r = uv.get(s.id);
+            if (!r) continue;
             const p = s.p;
             const b = p.b;
-            const pylon = OPEN.has(b.type);
-            const sw = Math.min(Math.max(p.w * 0.9, 60), 108), sh = sw / 4;
+            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
 
-            // face the district centre (the street)
+            // Cardinal face toward district centre (street), never a diagonal
             const dd = City.districts.find(x => x.id === p.district);
-            const ang = dd ? Math.atan2(dd.cx - p.x, dd.cz - p.z) : 0;
-            const nx = Math.sin(ang), nz = Math.cos(ang);
+            const dx = dd ? (dd.cx - p.x) : 0;
+            const dz = dd ? (dd.cz - p.z) : 1;
+            let nx = 0, nz = 0, ang = 0;
+            if (Math.abs(dx) >= Math.abs(dz)) {
+                nx = Math.sign(dx) || 1;
+                nz = 0;
+                ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+            } else {
+                nx = 0;
+                nz = Math.sign(dz) || 1;
+                ang = nz > 0 ? 0 : Math.PI;
+            }
 
-            // mount height + how far the board sits off the footprint
-            const mountY = pylon ? 50 : Math.min(p.h - sh / 2 - 6, 42);
-            const off = Math.max(p.w, p.d) / 2 + (pylon ? 20 : 4);
-            const bx = p.x + nx * off, bz = p.z + nz * off;
+            // Face width of the wall we mount on (not max extent — avoids overshoot)
+            const faceW = nx !== 0 ? p.d : p.w;
+            const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
+            // Sign width: fit on the face with margin so it never overhangs corners
+            const sw = Math.min(Math.max(faceW * 0.55, 40), Math.min(faceW * 0.88, 100));
+            const sh = sw / 4.2;
 
-            // dark sign box behind the neon, with depth so it reads as a fixture
-            const board = new THREE.BoxGeometry(sw + 8, sh + 7, 4);
+            // Flush to facade: board centre sits just outside the wall plane
+            const gap = pylon ? 18 : 2.2;          // wall signs almost flush
+            const boardDepth = pylon ? 5 : 3.2;
+            const bx = p.x + nx * (halfOut + gap + boardDepth / 2);
+            const bz = p.z + nz * (halfOut + gap + boardDepth / 2);
+            const mountY = pylon
+                ? 42
+                : Math.min(Math.max(FLOOR_H * 1.35, 30), Math.min((p.h || 60) * 0.42, 44));
+
+            // Housing — only slightly larger than the neon, depth = boardDepth
+            const board = new THREE.BoxGeometry(sw + 6, sh + 6, boardDepth);
             board.rotateY(ang);
             board.translate(bx, mountY, bz);
-            structGeos.push(paint(board, 0x12151b));
-            // thin accent frame line
-            const frame = new THREE.BoxGeometry(sw + 12, 3, 4.5);
+            structGeos.push(paint(board, 0x0c0e12));
+
+            // Accent frame around the face (thin, in front of housing)
+            const frameZ = boardDepth / 2 + 0.15;
+            const frame = new THREE.BoxGeometry(sw + 8, sh + 8, 0.6);
             frame.rotateY(ang);
-            frame.translate(bx, mountY - sh / 2 - 4, bz);
-            structGeos.push(paint(frame, new THREE.Color(s.color).multiplyScalar(0.5).getHex()));
+            frame.translate(bx + nx * frameZ, mountY, bz + nz * frameZ);
+            structGeos.push(paint(frame, new THREE.Color(s.color).multiplyScalar(0.55).getHex()));
+
+            // Bottom rail accent
+            const rail = new THREE.BoxGeometry(sw + 8, 2.2, 0.7);
+            rail.rotateY(ang);
+            rail.translate(bx + nx * frameZ, mountY - sh / 2 - 3.2, bz + nz * frameZ);
+            structGeos.push(paint(rail, new THREE.Color(s.color).multiplyScalar(0.7).getHex()));
 
             if (pylon) {
-                // two support posts from the ground to the board
-                for (const sx of [-1, 1]) {
-                    const px = bx + Math.cos(ang) * sx * (sw * 0.32);
-                    const pz = bz - Math.sin(ang) * sx * (sw * 0.32);
-                    const post = new THREE.BoxGeometry(5, mountY - sh / 2, 5);
-                    post.translate(px, (mountY - sh / 2) / 2, pz);
-                    structGeos.push(paint(post, 0x3a4048));
+                for (const side of [-1, 1]) {
+                    // posts along the board's width axis (perpendicular to normal)
+                    const tx = -nz * side * (sw * 0.28);
+                    const tz = nx * side * (sw * 0.28);
+                    const postH = mountY - sh / 2;
+                    const post = new THREE.BoxGeometry(4, postH, 4);
+                    post.translate(bx + tx, postH / 2, bz + tz);
+                    structGeos.push(paint(post, 0x2a3038));
                 }
             }
 
-            // neon text, front + mirrored back, floated just off the board
-            for (const back of [false, true]) {
-                const g = new THREE.PlaneGeometry(sw, sh);
-                const a = g.attributes.uv;
-                for (let i = 0; i < a.count; i++) {
-                    a.setXY(i, r.u0 + a.getX(i) * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
-                }
-                const face = back ? ang + Math.PI : ang;
-                const push = back ? -2.6 : 2.6;
-                g.rotateY(face);
-                g.translate(bx + nx * push, mountY, bz + nz * push);
-                neonGeos.push(g);
+            // Neon only on the street face (no back twin — backs were empty
+            // black boards that read as clipped double signs through walls).
+            const g = new THREE.PlaneGeometry(sw, sh);
+            const a = g.attributes.uv;
+            for (let i = 0; i < a.count; i++) {
+                a.setXY(i, r.u0 + a.getX(i) * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
             }
+            const neonPush = boardDepth / 2 + 0.35;
+            g.rotateY(ang);
+            g.translate(bx + nx * neonPush, mountY, bz + nz * neonPush);
+            neonGeos.push(g);
         }
 
-        this.neonMat = new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: 0.08, side: THREE.DoubleSide });
-        const mesh = new THREE.Mesh(mergeGeometries(neonGeos, false), this.neonMat);
-        mesh.matrixAutoUpdate = false;
-        scene.add(mesh);
-
-        const structMesh = new THREE.Mesh(mergeGeometries(structGeos, false),
-            new THREE.MeshLambertMaterial({ vertexColors: true }));
-        structMesh.matrixAutoUpdate = false;
-        scene.add(structMesh);
+        if (neonGeos.length) {
+            this.neonMat = new THREE.MeshBasicMaterial({
+                map: texture, transparent: true, alphaTest: 0.08,
+                side: THREE.FrontSide, depthWrite: false
+            });
+            const mesh = new THREE.Mesh(mergeGeometries(neonGeos, false), this.neonMat);
+            mesh.matrixAutoUpdate = false;
+            scene.add(mesh);
+        }
+        if (structGeos.length) {
+            const structMesh = new THREE.Mesh(mergeGeometries(structGeos, false),
+                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
+            structMesh.matrixAutoUpdate = false;
+            scene.add(structMesh);
+        }
         this.signCount = signs.length;
     },
 
@@ -715,39 +900,48 @@ export const World = {
         const dummy = new THREE.Object3D();
         const color = new THREE.Color();
 
-        // Trees — trunks + canopies, two InstancedMeshes
+        // Trees - tapered trunk + multi-lobe canopy (organic, still 2 draw calls)
         const treeSpots = [];
         for (const d of City.districts) {
-            const count = { park: 70, forest: 120, suburban: 26, academic: 16, urban: 6, industry: 3, coastal: 10, wasteland: 5, desert: 2 }[d.biome] ?? 6;
+            const count = { park: 70, forest: 120, plaza: 26, academic: 16, urban: 6, industry: 3, coastal: 10, wasteland: 5, desert: 2 }[d.biome] ?? 6;
             for (let i = 0; i < count; i++) {
                 const tx = d.cx + (rng() - 0.5) * (CELL_W - 70);
                 const tz = d.cz + (rng() - 0.5) * (CELL_D - 70);
-                if (Math.abs(tx - d.cx) < 44 || Math.abs(tz - d.cz) < 44) continue;   // inner roads
+                if (Math.abs(tx - d.cx) < 44 || Math.abs(tz - d.cz) < 44) continue;
                 let blocked = false;
                 for (const c of G.colliders) if (tx > c.x0 - 8 && tx < c.x1 + 8 && tz > c.z0 - 8 && tz < c.z1 + 8) { blocked = true; break; }
                 if (blocked) continue;
-                treeSpots.push({ x: tx, z: tz, biome: d.biome, s: 0.7 + rng() * 0.8 });
+                treeSpots.push({ x: tx, z: tz, biome: d.biome, s: 0.75 + rng() * 0.85, spin: rng() * Math.PI });
             }
         }
-        const trunkGeo = new THREE.CylinderGeometry(2.2, 3.2, 22, 5);
-        trunkGeo.translate(0, 11, 0);
-        const canGeo = new THREE.ConeGeometry(13, 34, 7);
-        canGeo.translate(0, 38, 0);
-        const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: 0x5a4430 }), treeSpots.length);
-        const cans = new THREE.InstancedMesh(canGeo, new THREE.MeshLambertMaterial(), treeSpots.length);
+        const trunkGeo = new THREE.CylinderGeometry(1.6, 3.4, 26, 7);
+        trunkGeo.translate(0, 13, 0);
+        const lobeA = new THREE.SphereGeometry(14, 8, 6); lobeA.translate(0, 34, 0);
+        const lobeB = new THREE.SphereGeometry(11, 7, 6); lobeB.translate(5, 42, -3);
+        const lobeC = new THREE.SphereGeometry(10, 7, 6); lobeC.translate(-6, 30, 4);
+        const lobeD = new THREE.SphereGeometry(8, 6, 5); lobeD.translate(3, 38, 6);
+        const canGeo = mergeGeometries([lobeA, lobeB, lobeC, lobeD], false);
+        const nTrees = Math.max(1, treeSpots.length);
+        const trunks = new THREE.InstancedMesh(trunkGeo, new THREE.MeshLambertMaterial({ color: 0x4a3528 }), nTrees);
+        const cans = new THREE.InstancedMesh(canGeo, new THREE.MeshLambertMaterial({ flatShading: true }), nTrees);
         treeSpots.forEach((t, i) => {
             dummy.position.set(t.x, 0, t.z);
             dummy.scale.setScalar(t.s);
-            dummy.rotation.y = rng() * Math.PI;
+            dummy.rotation.y = t.spin;
             dummy.updateMatrix();
             trunks.setMatrixAt(i, dummy.matrix);
             cans.setMatrixAt(i, dummy.matrix);
             const cc = t.biome === 'wasteland' ? color.set(0x6a5a48)
                 : t.biome === 'coastal' ? color.set(0x3f8a3f)
-                : t.biome === 'desert' ? color.set(0x4a7a3a)
-                : color.set(0x2d5a28).offsetHSL((rng() - 0.5) * 0.05, 0, rng() * 0.1);
+                : t.biome === 'desert' ? color.set(0x5a7a3a)
+                : color.set(0x2f6b2a).offsetHSL((rng() - 0.5) * 0.06, 0.05, (rng() - 0.5) * 0.12);
             cans.setColorAt(i, cc);
         });
+        trunks.count = treeSpots.length;
+        cans.count = treeSpots.length;
+        trunks.instanceMatrix.needsUpdate = true;
+        cans.instanceMatrix.needsUpdate = true;
+        if (cans.instanceColor) cans.instanceColor.needsUpdate = true;
         scene.add(trunks, cans);
 
         // Street lamps along avenues/streets
@@ -1050,6 +1244,6 @@ export const World = {
 };
 
 function matVC() {
-    if (!matVC._m) matVC._m = new THREE.MeshLambertMaterial({ vertexColors: true });
+    if (!matVC._m) matVC._m = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 });
     return matVC._m;
 }

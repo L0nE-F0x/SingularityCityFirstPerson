@@ -1,0 +1,20 @@
+{
+    "name": "singularity-city",
+    "version": "1.0.0",
+    "private": true,
+    "description": "A pixel-art AI industry city simulation. Dev tooling only — the app itself is a zero-bundler browser project.",
+    "type": "module",
+    "scripts": {
+        "lint": "eslint \"js/**/*.js\"",
+        "lint:fix": "eslint \"js/**/*.js\" --fix",
+        "format": "prettier --write \"js/**/*.js\" \"css/**/*.css\" \"*.json\" \"*.md\"",
+        "format:check": "prettier --check \"js/**/*.js\"",
+        "check": "npm run lint && npm run format:check",
+        "cachebust": "node tools/cachebust.mjs"
+    },
+    "devDependencies": {
+        "esbuild": "^0.28.0",
+        "eslint": "^9.17.0",
+        "prettier": "^3.4.2"
+    }
+}

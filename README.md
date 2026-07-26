@@ -1,4 +1,4 @@
-# 🏙️ Singularity City — First Person
+﻿# 🏙️ Singularity City — First Person
 
 **Walk the streets of the AI industry.** The living world of [singularitycity.net](https://singularitycity.net) rebuilt as a first-person exploration game: every lab, every district, every citizen — now at street level, on foot, in 3D.
 
@@ -56,3 +56,21 @@ The 2019-2023 3D experiment lagged because of ~2,000 unbatched draw calls, full-
 ## Tech
 
 Three.js r160 (vendored, no CDN dependency) · zero-build ES modules · procedural canvas textures · WebAudio synth SFX · localStorage save. Same game data as the production app (`js/data.js` is the single source of truth).
+
+## Integrated dual-view (this folder)
+
+This repo now vendors the **full Pixi 2D** production city under `pixi/` plus the **First Person** Three.js app at the root. Production `ApexForge/SingularityCity` is not modified — when you are happy, this tree is what you can push to replace it.
+
+```bash
+python serve.py
+# http://localhost:8931/home.html   ← pick 2D or FP
+# http://localhost:8931/pixi/       ← 2D city
+# http://localhost:8931/            ← first person
+```
+
+Hard-swap between views from either UI. Details: `INTEGRATION.md`.
+
+## Playtest status
+
+Integrated **2D + First Person** live in this folder (see `home.html`, `INTEGRATION.md`).  
+Still under active polish — not a production replacement yet. Resume work from `RESUME.md`.

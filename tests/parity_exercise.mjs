@@ -20,9 +20,9 @@ import { conferenceStatus } from '../js/conference.js';
 import { seasonForDate, SEASONS } from '../js/seasonal.js';
 import { kardashevScale } from '../js/kardashev.js';
 import { isWetWeather, puddleLayout } from '../js/wetness.js';
-import { createGhosts, stepGhost } from '../js/multiplayer.js';
+import { createGhosts, Multiplayer } from '../js/multiplayer.js';
 import { buildTerminalModel, terminalHtml } from '../js/terminal.js';
-import { TRAM_LINES } from '../js/data.js';
+import { TRAM_LINES, getFounderAct, FOUNDERS, LAB_HQ as HQMAP } from '../js/data.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -188,16 +188,11 @@ assert(applied.windows === 1 && applied.neon === 1, 'applyNeonBoost touches wind
 assert(fakeWin.emissiveIntensity > 0.4, 'window emissive increased under wet neonBoost');
 assert(fakeNeon.opacity > 1 || fakeNeon.color.g > fakeNeon.color.r * 0.9, 'neon material boosted under rain');
 
-// 12. Multiplayer ghosts
+// 12. Multiplayer — offline by design (no fake ghost peers when nobody is online)
 const ghosts = createGhosts(6);
-const gx = ghosts[0].x;
-for (let i = 0; i < 100; i++) {
-    ghosts[0].tx = gx + 500;
-    ghosts[0].tz = ghosts[0].z;
-    stepGhost(ghosts[0], 0.1);
-}
-assert(ghosts[0].x !== gx, 'ghost cursor moves');
-assert(ghosts.length === 6, 'six simulated ghost peers');
+assert(ghosts.length === 0, 'no placeholder ghost peers offline');
+const mpSnap = Multiplayer.snapshot();
+assert(mpSnap.count === 0 && mpSnap.online === false, 'multiplayer reports offline empty city');
 
 // 13. Terminal model + html (KeyD structural)
 G.ui = { aiIndex: 640 };
@@ -216,10 +211,13 @@ const mainSrc = fs.readFileSync(path.join(root, 'js/main.js'), 'utf8');
 for (const mod of [
     'vc_dealflow', 'research_papers', 'metro', 'jail', 'court',
     'orbit_mode', 'xray_mode', 'holomap', 'conference', 'seasonal',
-    'kardashev', 'wetness', 'multiplayer', 'terminal'
+    'kardashev', 'wetness', 'terminal'
 ]) {
     assert(mainSrc.includes(mod), 'main.js wires ' + mod);
 }
+// multiplayer module exists but is intentionally NOT booted with fake peers
+assert(fs.existsSync(path.join(root, 'js/multiplayer.js')), 'multiplayer.js present (offline stub)');
+assert(!mainSrc.includes("from './multiplayer.js'"), 'main does not spawn offline ghost peers');
 
 // interior special themes structural
 const intSrc = fs.readFileSync(path.join(root, 'js/interior.js'), 'utf8');
@@ -228,6 +226,57 @@ for (const cat of ['jail', 'court', 'embassy', 'mission', 'power', 'boardroom'])
         'interior has ' + cat + ' theme');
 }
 assert(intSrc.includes('setFloor') && intSrc.includes('maxFloor'), 'multi-floor lift support');
+
+
+// 14. Founder schedule + LAB_HQ
+assert(FOUNDERS.length >= 6, 'founders roster present');
+assert(HQMAP.openai === 'bld_o' && HQMAP.xai === 'bld_x', 'LAB_HQ maps labs to buildings');
+const fa = getFounderAct(0.4, 0.5, { lab: 'openai', name: 'Sam' });
+assert(fa.act === 'work' && fa.bid === 'bld_o', 'founder midday work at HQ');
+const fl = getFounderAct(0.52, 0.1, { lab: 'openai', name: 'Sam' });
+assert(['lunch', 'socialize', 'work'].includes(fl.act), 'founder lunch window mobile');
+const fsleep = getFounderAct(0.1, 0.2, { lab: 'xai', name: 'Elon' });
+assert(fsleep.act === 'sleep', 'founder night sleep');
+
+// 15. Metro board/alight API structural
+const metroSrc = fs.readFileSync(path.join(root, 'js/metro.js'), 'utf8');
+assert(metroSrc.includes('board(') && metroSrc.includes('alight(') && metroSrc.includes('canBoardNear'),
+    'metro has board/alight/canBoardNear');
+assert(metroSrc.includes('riding') && metroSrc.includes('cabin'), 'metro ride cabin present');
+// dwell long enough to board
+const train2 = { routeIdx: 0, seg: 0, segProgress: 0.999, speed: 200, x: routes[0].pts[0].x, z: routes[0].pts[0].z, dirX: 1, dirZ: 0, dwellT: 0, laps: 0, atStop: null, _longDwell: true };
+for (let i = 0; i < 5; i++) stepTrain(train2, 0.05, routes);
+assert(train2.dwellT > 0 || train2.atStop, 'metro dwells at stops for boarding');
+
+// 16. Elevator / multi-floor structural
+assert(intSrc.includes('rideElevator') && intSrc.includes("cat: 'metro'") && (intSrc.includes("cat === 'platform'") || (intSrc.includes("cat === 'platform'") || intSrc.includes("'platform'"))),
+    'interior elevators + metro platform themes');
+assert(intSrc.includes('MeshStandardMaterial'), 'interior uses upgraded materials');
+
+// 17. Founder VIP traffic structural
+const trafSrc = fs.readFileSync(path.join(root, 'js/traffic.js'), 'utf8');
+assert(trafSrc.includes('_initVipCars') && trafSrc.includes('_initFounderHelis'),
+    'traffic has VIP founder cars + founder helis');
+assert(trafSrc.includes('FOUNDERS'), 'traffic imports founders');
+
+// 18. Citizens schedule helpers
+const citSrc2 = fs.readFileSync(path.join(root, 'js/citizens.js'), 'utf8');
+assert(citSrc2.includes('getFounderAct') && citSrc2.includes('scheduleSnapshot') && citSrc2.includes('founders()'),
+    'citizens founder schedule + snapshot helpers');
+
+
+// 19. Destination themes (2D parity routes)
+for (const cat of ['underground', 'vc', 'agents', 'alignment', 'arena', 'cafe', 'gym', 'nursery', 'conference', 'backbone']) {
+    assert(intSrc.includes("'" + cat + "'") || intSrc.includes(`cat: '${cat}'`) || intSrc.includes(`cat === '${cat}'`),
+        'interior destination theme: ' + cat);
+}
+assert(intSrc.includes("launchpad") && intSrc.includes('mission'),
+    'launchpads map to mission interiors');
+assert(!/NO = new Set\(\[[^\]]*launchpad/.test(intSrc),
+    'launchpad not blocked from enter');
+assert(fs.readFileSync(path.join(root, 'js/world.js'), 'utf8').includes('_crown') ||
+    fs.readFileSync(path.join(root, 'js/world.js'), 'utf8').includes('Crown'),
+    'skyline crown/spire polish present');
 
 log('');
 log(failed ? `FAILED ${failed} assertion(s)` : 'ALL EXERCISES PASSED');

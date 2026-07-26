@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Singularity City — Embed</title>
+<meta name="description" content="Embeddable live view of Singularity City — a real-time simulation of the AI industry.">
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/x-icon" href="favicon.ico">
+<style>
+    html, body { margin: 0; padding: 0; height: 100%; background: #060610; color: #8df; font-family: monospace; }
+    .loader { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; }
+    .loader h1 { font-size: 11px; letter-spacing: 2px; color: #22d3ee; text-shadow: 0 0 8px rgba(34,211,238,0.6); }
+</style>
+<script>
+// Thin wrapper: redirect to the main app with ?embed=1 preserving any extra query params.
+(function(){
+    var params = new URLSearchParams(window.location.search);
+    params.set('embed', '1');
+    window.location.replace('index.html?' + params.toString());
+})();
+</script>
+</head>
+<body>
+<div class="loader"><h1>◆ LOADING SINGULARITY CITY ◆</h1></div>
+</body>
+</html>

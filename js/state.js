@@ -39,6 +39,7 @@ export const G = {
     orbitMode: false, xrayMode: false, holomapMode: false, terminalOpen: false,
     floorY: 0,          // ground level the player stands on (interiors sit low)
     inside: null,       // the building you are inside, or null
+    ridingMetro: false, // camera attached to a metro car
     quality: 'medium',
     achievements: {}, visitedDistricts: {}, metCitizens: {},
     stats: { tramsSpotted: 0, moonClicks: 0 },

@@ -46,7 +46,11 @@ export const Player = {
         document.addEventListener('pointerlockchange', () => {
             this.locked = document.pointerLockElement === G.canvas;
             if (!this.locked && G.started && !G.panelOpen && !G.tourMode) {
-                // released without a panel → treat as pause
+                if (G._suppressPauseOnUnlock) {
+                    G._suppressPauseOnUnlock = false;
+                    return;
+                }
+                // released without a panel — treat as pause (ESC frees the mouse)
                 G.ui.showPause();
             }
         });
@@ -73,6 +77,13 @@ export const Player = {
 
     update(dt) {
         if (!this.enabled || G.tourMode || G.orbitMode || G.terminalOpen) return;
+        // Metro ride: look only — Metro attaches position each frame
+        if (G.ridingMetro) {
+            G.camera.rotation.order = 'YXZ';
+            G.camera.rotation.y = this.yaw;
+            G.camera.rotation.x = this.pitch;
+            return;
+        }
         const cam = G.camera;
 
         const sprint = this.keys['ShiftLeft'] || this.keys['ShiftRight'];
@@ -160,3 +171,4 @@ export const Player = {
         return false;
     }
 };
+

@@ -1,4 +1,4 @@
-/* ══════════════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════════════
    CITIZEN OF THE DAY — daily spotlight on one named model NPC.
 
    Ported from the production 2D app (ApexForge/SingularityCity/js/citizen_of_day.js)
@@ -17,9 +17,12 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G } from './state.js';
 import { SEED, LABS } from './data.js';
+import { CityStore } from './store/city_store.js';
+import { INTEGRATION } from './store/config.js';
 import { City, KERB_H } from './city.js';
 
-const LS_PICK_KEY = 'sc_fp_cotd_pick_v1';
+const LS_PICK_KEY = INTEGRATION.COTD_PICK_KEY;           // production-aligned
+const LS_PICK_LEGACY = INTEGRATION.LEGACY_COTD_PICK_KEY; // migrate from FP-only key
 const LS_NEWS_KEY = 'sc_news_events_v1';
 
 function utcDateString(d) {
@@ -70,7 +73,8 @@ function tryPickFromNewsLab(active, today) {
 function pickToday() {
     const today = utcDateString();
     try {
-        const raw = localStorage.getItem(LS_PICK_KEY);
+        let raw = localStorage.getItem(LS_PICK_KEY);
+            if (!raw) raw = localStorage.getItem(LS_PICK_LEGACY);
         if (raw) {
             const cached = JSON.parse(raw);
             if (cached && cached.date === today && cached.id) {
@@ -215,6 +219,15 @@ export const CitizenOfDay = {
 
     _tryPick() {
         const result = pickToday();
+        if (result?.model) {
+            CityStore.setCotd({
+                date: result.date,
+                modelId: result.model.id,
+                name: result.model.name,
+                lab: result.model.lab,
+                source: result.source
+            });
+        }
         if (!result) return false;
         this.cotdId = result.model.id;
         this.cotdName = result.model.name;
@@ -456,3 +469,4 @@ export const CitizenOfDay = {
         }
     }
 };
+

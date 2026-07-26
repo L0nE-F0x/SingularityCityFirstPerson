@@ -1,4 +1,4 @@
-/* ══════════════════════════════════════════════════════════════════════════
+﻿/* ══════════════════════════════════════════════════════════════════════════
    SKY + WEATHER — gradient sky dome shader, sun/moon arc, stars, drifting
    clouds, recycled particle precipitation (rain / snow / cherry blossom),
    fog, thunderstorms with lightning, and rare night auroras.
@@ -85,18 +85,34 @@ export const Weather = {
         this.moonSpr.scale.setScalar(520);
         scene.add(this.moonSpr);
 
-        // ── stars ──
-        const starN = 1100, pos = new Float32Array(starN * 3);
+        // stars - soft circular sprites (default Points are squares)
+        const starN = 1600;
+        const pos = new Float32Array(starN * 3);
         for (let i = 0; i < starN; i++) {
-            const a = Math.random() * Math.PI * 2, e = Math.random() * Math.PI * 0.48 + 0.03;
-            const r = 6400;
+            const a = Math.random() * Math.PI * 2;
+            const e = Math.pow(Math.random(), 0.7) * Math.PI * 0.48 + 0.02;
+            const r = 6200 + Math.random() * 800;
             pos[i * 3] = Math.cos(a) * Math.cos(e) * r;
             pos[i * 3 + 1] = Math.sin(e) * r;
             pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r;
         }
         const sg = new THREE.BufferGeometry();
         sg.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-        this.stars = new THREE.Points(sg, new THREE.PointsMaterial({ color: 0xcdd8ff, size: 9, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
+        const starCan = document.createElement('canvas');
+        starCan.width = starCan.height = 64;
+        const sctx = starCan.getContext('2d');
+        const sgrad = sctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        sgrad.addColorStop(0, 'rgba(255,255,255,1)');
+        sgrad.addColorStop(0.28, 'rgba(230,238,255,0.9)');
+        sgrad.addColorStop(0.55, 'rgba(180,200,255,0.3)');
+        sgrad.addColorStop(1, 'rgba(0,0,0,0)');
+        sctx.fillStyle = sgrad; sctx.fillRect(0, 0, 64, 64);
+        const starMap = new THREE.CanvasTexture(starCan);
+        this.stars = new THREE.Points(sg, new THREE.PointsMaterial({
+            color: 0xe8eeff, map: starMap, size: 22, sizeAttenuation: true,
+            transparent: true, opacity: 0, fog: false, depthWrite: false,
+            blending: THREE.AdditiveBlending, alphaTest: 0.02
+        }));
         scene.add(this.stars);
 
         // ── clouds (billboard sprites) ──
@@ -175,7 +191,10 @@ export const Weather = {
         // ── weather state machine (climate-biased) ──
         this._timer -= dt;
         if (this._timer <= 0) {
-            if (!this._climate) this._climate = CLIMATES[detectClimate()];
+            if (!this._climate) {
+            this.climate = detectClimate();
+            this._climate = CLIMATES[this.climate];
+        }
             // half the time follow the Markov chain, half pull a climate favourite
             const pool = Math.random() < 0.5 ? NEXT[this.state] : this._climate.favor;
             this.set(pool[Math.floor(Math.random() * pool.length)]);
@@ -326,7 +345,33 @@ export const Weather = {
         }
 
         // ── night effects on the city ──
-        for (const m of W.windowMats || []) m.emissiveIntensity = night * 0.9;
-        if (W.lampHeadMat) W.lampHeadMat.color.setScalar(0.15 + night * 0.95);
+        // Stronger lit windows + neon so night reads like the 2D city, not grey boxes
+        const winGlow = night * night * 0.35 + night * 1.15; // ease-in toward full night
+        for (const m of W.windowMats || []) {
+            m.emissiveIntensity = Math.min(1.65, winGlow);
+            if (m.emissive) m.emissive.setHex(night > 0.45 ? 0xffe0a8 : 0xffd9a0);
+        }
+        if (W.lampHeadMat) W.lampHeadMat.color.setScalar(0.12 + night * 1.05);
+        // Neon signs punch up after dusk
+        if (W.neonMat) {
+            if (W.neonMat.userData._baseOpacity == null) {
+                W.neonMat.userData._baseOpacity = W.neonMat.opacity != null ? W.neonMat.opacity : 1;
+            }
+            W.neonMat.opacity = Math.min(1, W.neonMat.userData._baseOpacity * (0.75 + night * 0.55));
+            W.neonMat.transparent = true;
+        }
+        // Soft magenta/cyan fill so neon "bounces" without shadow maps
+        if (W.ambient) {
+            const dayAmb = 0x8a97ac;
+            const nightAmb = 0x3a2a55; // purple-city bounce
+            if (!this._ambDay) this._ambDay = new THREE.Color(dayAmb);
+            if (!this._ambNight) this._ambNight = new THREE.Color(nightAmb);
+            W.ambient.color.copy(this._ambDay).lerp(this._ambNight, Math.min(1, night * 1.1));
+            W.ambient.intensity = 0.45 + 0.35 * day + night * 0.28;
+        }
+        if (W.hemi) {
+            W.hemi.intensity = 0.5 + 0.9 * day * dim + night * 0.22;
+        }
     }
 };
+

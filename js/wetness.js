@@ -86,16 +86,27 @@ export const Wetness = {
     init(scene) {
         this.group = new THREE.Group();
         scene.add(this.group);
+        // soft-edged puddle disc (radial alpha) so wet ground doesn't look like hard coins
+        const can = document.createElement('canvas');
+        can.width = can.height = 64;
+        const ctx = can.getContext('2d');
+        const rg = ctx.createRadialGradient(32, 32, 4, 32, 32, 32);
+        rg.addColorStop(0, 'rgba(180,220,255,0.85)');
+        rg.addColorStop(0.45, 'rgba(80,140,200,0.45)');
+        rg.addColorStop(1, 'rgba(20,40,60,0)');
+        ctx.fillStyle = rg; ctx.fillRect(0, 0, 64, 64);
+        const puddleMap = new THREE.CanvasTexture(can);
         const mat = new THREE.MeshBasicMaterial({
-            color: 0x1a3048,
+            map: puddleMap,
+            color: 0xa8d4ff,
             transparent: true,
-            opacity: 0.45,
+            opacity: 0.55,
             depthWrite: false
         });
         for (let i = 0; i < PUDDLES; i++) {
-            const m = new THREE.Mesh(new THREE.CircleGeometry(1, 10), mat.clone());
+            const m = new THREE.Mesh(new THREE.CircleGeometry(1, 16), mat.clone());
             m.rotation.x = -Math.PI / 2;
-            m.position.y = 0.4;
+            m.position.y = 0.45;
             m.visible = false;
             this.group.add(m);
             this.puddles.push(m);
