@@ -1140,6 +1140,7 @@ export const World = {
             let map;
             try {
                 map = TEX.makeSignPlate(label, color, '');
+                if (G.renderer) { try { G.renderer.initTexture(map); } catch (_) {} }
             } catch (e) {
                 console.warn('[signs] makeSignPlate failed', b.id, e);
                 continue;
@@ -1163,7 +1164,8 @@ export const World = {
                 toneMapped: false,
                 transparent: false,
                 depthWrite: true,
-                depthTest: true
+                depthTest: true,
+                fog: false
             });
             const plate = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
             plate.position.set(bx, mountY, bz);

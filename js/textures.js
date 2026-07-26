@@ -341,57 +341,87 @@ export function facade(floors, opts = {}) {
 // High-contrast readable text; never empty boards; neon-friendly plates.
 /** One full-bleed sign plate texture (no atlas UV math — always readable). */
 /** Full-bleed sign texture. ASCII-only label so glyph fallback never blanks the canvas. */
+/** Full-bleed sign plate as DataTexture (most reliable GPU upload path). */
 export function makeSignPlate(text, color = '#22d3ee', emoji = '') {
-    const W = 512, H = 140;
+    const W = 512, H = 128;
     const canvasEl = document.createElement('canvas');
     canvasEl.width = W;
     canvasEl.height = H;
-    const x = canvasEl.getContext('2d', { alpha: false });
-    // solid dark bg (alpha:false canvas — no transparent weirdness)
-    x.fillStyle = '#0b1220';
+    const x = canvasEl.getContext('2d', { alpha: false, willReadFrequently: true });
+
+    // High-contrast panel
+    x.fillStyle = '#050a14';
     x.fillRect(0, 0, W, H);
-    // inner panel
-    x.fillStyle = '#111827';
-    x.fillRect(8, 8, W - 16, H - 16);
-    // border
-    const neon = (typeof color === 'string' && color.startsWith('#')) ? color : '#22d3ee';
+    x.fillStyle = '#0f172a';
+    x.fillRect(6, 6, W - 12, H - 12);
+
+    const neon = (typeof color === 'string' && color[0] === '#') ? color : '#22d3ee';
     x.strokeStyle = neon;
-    x.lineWidth = 8;
-    x.strokeRect(10, 10, W - 20, H - 20);
+    x.lineWidth = 10;
+    x.strokeRect(8, 8, W - 16, H - 16);
     x.strokeStyle = '#ffffff';
     x.lineWidth = 2;
-    x.strokeRect(18, 18, W - 36, H - 36);
+    x.strokeRect(16, 16, W - 32, H - 32);
 
-    // sanitize label to printable ASCII-ish
+    // Text band
+    x.fillStyle = '#1e293b';
+    x.fillRect(28, H / 2 - 32, W - 56, 64);
+
     let label = String(text || 'BUILDING').toUpperCase()
-        .replace(/[^\w\s\-\.'&]/g, ' ')
+        .replace(/[^A-Z0-9 \-.'&]/g, ' ')
         .replace(/\s+/g, ' ')
         .trim() || 'BUILDING';
 
+    // wrap long names to 2 lines
     x.textAlign = 'center';
     x.textBaseline = 'middle';
-    let fs = 44;
-    x.font = 'bold ' + fs + 'px monospace';
-    while (x.measureText(label).width > W - 48 && fs > 16) {
-        fs -= 2;
-        x.font = 'bold ' + fs + 'px monospace';
+    let lines = [label];
+    let fs = 42;
+    x.font = 'bold ' + fs + 'px monospace, Consolas, "Courier New", sans-serif';
+    if (x.measureText(label).width > W - 64) {
+        const words = label.split(' ');
+        let a = '', b = '';
+        for (const w of words) {
+            const t = (a + ' ' + w).trim();
+            if (x.measureText(t).width < W - 64) a = t;
+            else b = (b + ' ' + w).trim();
+        }
+        if (b) lines = [a || label, b];
+        else {
+            while (x.measureText(label).width > W - 64 && fs > 18) {
+                fs -= 2;
+                x.font = 'bold ' + fs + 'px monospace, Consolas, "Courier New", sans-serif';
+            }
+            lines = [label];
+        }
     }
-    // black outline
-    x.lineWidth = 6;
-    x.strokeStyle = '#000000';
-    x.strokeText(label, W / 2, H / 2);
-    // neon then white
-    x.fillStyle = neon;
-    x.fillText(label, W / 2, H / 2);
-    x.fillStyle = '#ffffff';
-    x.fillText(label, W / 2, H / 2);
+    fs = lines.length > 1 ? 28 : fs;
+    x.font = 'bold ' + fs + 'px monospace, Consolas, "Courier New", sans-serif';
 
-    const t = new THREE.CanvasTexture(canvasEl);
+    const drawLine = (str, y) => {
+        x.lineWidth = 5;
+        x.strokeStyle = '#000000';
+        x.strokeText(str, W / 2, y, W - 64);
+        x.fillStyle = neon;
+        x.fillText(str, W / 2, y, W - 64);
+        x.fillStyle = '#ffffff';
+        x.fillText(str, W / 2, y, W - 64);
+    };
+    if (lines.length === 1) drawLine(lines[0], H / 2);
+    else {
+        drawLine(lines[0], H / 2 - fs * 0.65);
+        drawLine(lines[1], H / 2 + fs * 0.65);
+    }
+
+    // Upload as DataTexture — avoids CanvasTexture quirks on some GPUs
+    const img = x.getImageData(0, 0, W, H);
+    const data = new Uint8Array(img.data.buffer.slice(0));
+    const t = new THREE.DataTexture(data, W, H, THREE.RGBAFormat);
     t.colorSpace = THREE.SRGBColorSpace;
-    t.anisotropy = 4;
-    t.minFilter = THREE.LinearFilter;
     t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearFilter;
     t.generateMipmaps = false;
+    t.flipY = true;
     t.needsUpdate = true;
     return t;
 }

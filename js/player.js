@@ -78,6 +78,7 @@ export const Player = {
     },
 
     lock() {
+        try { G.audio?.resume?.(); } catch (_) {}
         if (!G.canvas || document.pointerLockElement === G.canvas) return;
         // Autostart / no-gesture paths must never throw NotAllowedError into the console.
         const tryLock = (opts) => {
@@ -102,6 +103,7 @@ export const Player = {
         }
     },
     unlock() {
+        try { G.audio?.resume?.(); } catch (_) {}
         try {
             if (document.pointerLockElement) document.exitPointerLock();
         } catch (_) { /* ignore */ }

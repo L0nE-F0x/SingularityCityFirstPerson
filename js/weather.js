@@ -311,7 +311,7 @@ export const Weather = {
         };
         this.pMat = new THREE.PointsMaterial({
             color: 0xaaccee, size: 3.2, map: this._pMaps.rain,
-            transparent: true, opacity: 0.7, depthAttenuation: true,
+            transparent: true, opacity: 0.7, sizeAttenuation: true,
             depthWrite: false, alphaTest: 0.02
         });
         this.points = new THREE.Points(this.pGeo, this.pMat);

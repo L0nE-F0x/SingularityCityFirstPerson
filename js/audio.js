@@ -18,13 +18,34 @@ export const Audio = {
             this.master = this.ctx.createGain();
             this.master.gain.value = G.settings.volume;
             this.master.connect(this.ctx.destination);
-            this._startBeds();
+            // Don't start WebAudio sources until a user gesture (Chrome autoplay policy)
+            this._bedsStarted = false;
+            const unlock = () => {
+                this.resume();
+                document.removeEventListener('pointerdown', unlock);
+                document.removeEventListener('keydown', unlock);
+            };
+            document.addEventListener('pointerdown', unlock, { passive: true });
+            document.addEventListener('keydown', unlock, { passive: true });
         } catch (e) { this.ctx = null; }
 
         if (G.settings.music) {
             this.music = new window.Audio('assets/SingularityCity.mp3');
             this.music.loop = true;
             this.music.volume = 0.35 * G.settings.volume;
+            // play after gesture via resume()
+        }
+    },
+
+    /** Resume AudioContext + beds/music after a user gesture. Safe to call often. */
+    resume() {
+        if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume().catch(() => {});
+        }
+        if (this.ctx && !this._bedsStarted) {
+            try { this._startBeds(); this._bedsStarted = true; } catch (_) { /* */ }
+        }
+        if (G.settings.music && this.music) {
             this.music.play().catch(() => {});
         }
     },
@@ -78,6 +99,7 @@ export const Audio = {
 
     setWeatherBeds(state, intensity, night) {
         if (!this.ctx) return;
+        if (this.ctx.state === 'suspended') return; // wait for gesture
         const rain = { drizzle: 0.05, rain: 0.11, thunderstorm: 0.16 }[state] || 0;
         if (this.rainGain) this.rainGain.gain.linearRampToValueAtTime(rain * intensity, this.ctx.currentTime + 1.2);
         const wind = 0.015 + (state === 'thunderstorm' ? 0.05 : state === 'snow' ? 0.035 : 0.012) + night * 0.005;
@@ -86,6 +108,7 @@ export const Audio = {
 
     _osc(type, f0, f1, t, dur, vol = 0.12) {
         if (!this.ctx || !G.settings.sfx) return;
+        if (this.ctx.state === 'suspended') { this.resume(); return; }
         const o = this.ctx.createOscillator(), g = this.ctx.createGain();
         o.type = type;
         o.frequency.setValueAtTime(f0, t);
