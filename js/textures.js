@@ -350,7 +350,7 @@ export function signAtlas(signs) {
         const col = i % COLS, row = Math.floor(i / COLS);
         const px = col * CW, py = row * CH;
         const neon = s.color || '#22d3ee';
-        const padX = 8, padY = 16;
+        const padX = 4, padY = 8;
         const pw = CW - padX * 2, ph = CH - padY * 2;
 
         // solid opaque plate (alphaTest-friendly) — never transparent/empty
@@ -427,6 +427,9 @@ export function signAtlas(signs) {
     });
     const t = tex(c);
     t.anisotropy = 8;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
     t.needsUpdate = true;
     return { texture: t, uv };
 }

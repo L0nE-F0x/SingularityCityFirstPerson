@@ -957,44 +957,56 @@ export const World = {
     },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
-        // Mount signs FLUSH on the street-facing facade (cardinal axis only).
-        // Face nearest road so pedestrians can read; neon plane sits outside housing.
+        // Bulletproof street signs: atlas texture ON the face plate (not a separate
+        // neon plane that can face the wrong way). Solid brand-colored "frame boxes"
+        // were reading as empty teal slabs when the text plane faced into the wall.
+        const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
+            'monument', 'solar', 'wind', 'dam']);
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
             'graveyard', 'billboard', 'monument', 'arena', 'black_market',
             'nuclear', 'coal', 'dish', 'metro']);
-        const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
-            'monument', 'solar', 'wind', 'dam']);
 
         const signs = [];
         for (const p of G.placements) {
             const b = p.b;
-            if (NO_SIGN.has(b.type)) continue;
+            if (!b || NO_SIGN.has(b.type)) continue;
             const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
                 : b.type === 'black_market' ? '#f472b6'
                 : b.type === 'bar' ? '#e879f9'
                 : b.type === 'newspaper' ? '#fbbf24'
-                : b.type === 'embassy' ? '#94a3b8'
+                : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
                 : '#22d3ee';
             let label = b.id === 'black_market' ? 'THE UNDERGROUND'
-                : (b.name || b.id || 'BUILDING').toString().toUpperCase();
+                : String(b.name || b.id || 'BUILDING').toUpperCase();
             if (!label.trim()) label = 'BUILDING';
             signs.push({ id: b.id, text: label, emoji: b.emoji || '◆', color, p });
         }
         if (!signs.length) { this.signCount = 0; return; }
 
         const { texture, uv } = TEX.signAtlas(signs);
-        const neonGeos = [];
-        const structGeos = [];
+        if (!texture) { this.signCount = 0; return; }
 
-        for (const s of signs) {
-            const r = uv.get(s.id);
-            if (!r) continue;
-            const p = s.p;
+        const plateGeos = [];
+        const bezelGeos = [];
+
+        // Decide facing: plaza/entrance buildings face district centre; towers face nearest road.
+        const faceFor = (p) => {
             const b = p.b;
-            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
+            const plazaTypes = new Set(['villa', 'housing', 'embassy', 'cabin', 'generic']);
+            const dd = City.districts.find(x => x.id === p.district);
+            const preferPlaza = plazaTypes.has(b.type) || (b.fl || 0) <= 4;
 
-            let nx = 0, nz = 0, ang = 0;
-            {
+            let nx = 0, nz = 1, ang = 0;
+            if (preferPlaza && dd) {
+                const dx = dd.cx - p.x, dz = dd.cz - p.z;
+                if (Math.abs(dx) >= Math.abs(dz)) {
+                    nx = Math.sign(dx) || 1; nz = 0;
+                    ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+                } else {
+                    nx = 0; nz = Math.sign(dz) || 1;
+                    ang = nz > 0 ? 0 : Math.PI;
+                }
+            } else {
                 const axs = (City.avenueXs || []).concat(City.ringX || []);
                 const zss = (City.streetZs || []).concat(City.ringZ || []);
                 let bestAx = axs[0] ?? 0, bestAd = Infinity;
@@ -1008,105 +1020,102 @@ export const World = {
                     if (d < bestZd) { bestZd = d; bestSz = sz; }
                 }
                 if (bestAd <= bestZd) {
-                    nx = Math.sign(bestAx - p.x) || 1;
-                    nz = 0;
+                    nx = Math.sign(bestAx - p.x) || 1; nz = 0;
                     ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
                 } else {
-                    nx = 0;
-                    nz = Math.sign(bestSz - p.z) || 1;
+                    nx = 0; nz = Math.sign(bestSz - p.z) || 1;
                     ang = nz > 0 ? 0 : Math.PI;
                 }
             }
+            return { nx, nz, ang };
+        };
+
+        for (const s of signs) {
+            const r = uv.get(s.id);
+            if (!r) continue;
+            const p = s.p;
+            const b = p.b;
+            const { nx, nz, ang } = faceFor(p);
+            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
 
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            const sw = Math.min(Math.max(faceW * 0.5, 36), Math.min(faceW * 0.82, 96));
-            const sh = sw / 4.2;
+            const sw = Math.min(Math.max(faceW * 0.55, 40), Math.min(faceW * 0.9, 110));
+            const sh = Math.max(14, sw / 3.8);
 
-            // gap keeps housing from sinking into the wall AABB
-            const gap = pylon ? 16 : 1.6;
-            const boardDepth = pylon ? 4.5 : 2.6;
-            const bx = p.x + nx * (halfOut + gap + boardDepth / 2);
-            const bz = p.z + nz * (halfOut + gap + boardDepth / 2);
+            const gap = pylon ? 14 : 2.5;
+            const bx = p.x + nx * (halfOut + gap + 0.8);
+            const bz = p.z + nz * (halfOut + gap + 0.8);
             const mountY = pylon
-                ? 40
-                : Math.min(
-                    Math.max(FLOOR_H * 1.45, 32),
-                    Math.min((p.h || 60) * 0.38, 48)
+                ? 36
+                : Math.min(Math.max(FLOOR_H * 1.35, 28), Math.min((p.h || 48) * 0.42, 44));
+
+            // Textured plate = THE sign (atlas cell). DoubleSide so plaza + street both work.
+            const plate = new THREE.PlaneGeometry(sw, sh);
+            const uva = plate.attributes.uv;
+            for (let i = 0; i < uva.count; i++) {
+                uva.setXY(
+                    i,
+                    r.u0 + uva.getX(i) * (r.u1 - r.u0),
+                    r.v0 + uva.getY(i) * (r.v1 - r.v0)
                 );
+            }
+            plate.rotateY(ang);
+            plate.translate(bx, mountY, bz);
+            plateGeos.push(plate);
 
-            const board = new THREE.BoxGeometry(sw + 5, sh + 5, boardDepth);
-            board.rotateY(ang);
-            board.translate(bx, mountY, bz);
-            structGeos.push(paint(board, 0x0a0c10));
+            // Dark bezel slightly BIGGER and BEHIND the plate (never brand-cyan full slab)
+            const bezel = new THREE.BoxGeometry(sw + 4, sh + 4, 2.2);
+            bezel.rotateY(ang);
+            bezel.translate(bx - nx * 1.2, mountY, bz - nz * 1.2);
+            bezelGeos.push(paint(bezel, 0x0b0e14));
 
-            const frameZ = boardDepth / 2 + 0.12;
-            const frame = new THREE.BoxGeometry(sw + 6.5, sh + 6.5, 0.5);
-            frame.rotateY(ang);
-            frame.translate(bx + nx * frameZ, mountY, bz + nz * frameZ);
-            structGeos.push(paint(frame, new THREE.Color(s.color).multiplyScalar(0.5).getHex()));
-
-            const rail = new THREE.BoxGeometry(sw + 6.5, 1.8, 0.55);
-            rail.rotateY(ang);
-            rail.translate(bx + nx * frameZ, mountY - sh / 2 - 2.8, bz + nz * frameZ);
-            structGeos.push(paint(rail, new THREE.Color(s.color).multiplyScalar(0.65).getHex()));
+            // Thin accent strip under the sign (small — not a second board)
+            const strip = new THREE.BoxGeometry(sw + 2, 1.6, 1.4);
+            strip.rotateY(ang);
+            strip.translate(bx - nx * 0.4, mountY - sh / 2 - 2.2, bz - nz * 0.4);
+            bezelGeos.push(paint(strip, new THREE.Color(s.color).getHex()));
 
             if (pylon) {
                 for (const side of [-1, 1]) {
-                    const tx = -nz * side * (sw * 0.28);
-                    const tz = nx * side * (sw * 0.28);
+                    const tx = -nz * side * (sw * 0.3);
+                    const tz = nx * side * (sw * 0.3);
                     const postH = mountY - sh / 2;
-                    const post = new THREE.BoxGeometry(3.5, postH, 3.5);
-                    post.translate(bx + tx, postH / 2, bz + tz);
-                    structGeos.push(paint(post, 0x2a3038));
+                    const post = new THREE.BoxGeometry(3.2, Math.max(8, postH), 3.2);
+                    post.translate(bx + tx - nx * 1.2, Math.max(4, postH / 2), bz + tz - nz * 1.2);
+                    bezelGeos.push(paint(post, 0x2a3038));
                 }
             }
-
-            // Neon plate flush outside housing (tiny offset kills z-fight).
-            // Front-facing only on façade mounts (back is in the wall). Free-standing
-            // pylons get a twin with mirrored U so the reverse face is not backwards text.
-            const makeNeonPlate = (push, flipU) => {
-                const g = new THREE.PlaneGeometry(sw * 0.94, sh * 0.88);
-                const a = g.attributes.uv;
-                for (let i = 0; i < a.count; i++) {
-                    const u = flipU ? (1 - a.getX(i)) : a.getX(i);
-                    a.setXY(i, r.u0 + u * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
-                }
-                g.rotateY(ang + (flipU ? Math.PI : 0));
-                g.translate(bx + nx * push, mountY, bz + nz * push);
-                return g;
-            };
-            const neonPush = boardDepth / 2 + 0.35;
-            neonGeos.push(makeNeonPlate(neonPush, false));
-            if (pylon) neonGeos.push(makeNeonPlate(-(boardDepth / 2 + 0.35), true));
         }
 
-        if (neonGeos.length) {
+        if (plateGeos.length) {
             this.neonMat = new THREE.MeshBasicMaterial({
                 map: texture,
-                transparent: true,
-                alphaTest: 0.12,
-                // FrontSide: façade backs sit in the wall; pylons use twin quads (not mirrored DoubleSide)
-                side: THREE.FrontSide,
-                depthWrite: false,
-                depthTest: true,
+                transparent: false,   // plate is opaque — always visible
+                alphaTest: 0,
+                side: THREE.DoubleSide,
+                depthWrite: true,
                 toneMapped: false
             });
-            const mesh = new THREE.Mesh(mergeGeometries(neonGeos, false), this.neonMat);
+            const mesh = new THREE.Mesh(mergeGeometries(plateGeos, false), this.neonMat);
             mesh.matrixAutoUpdate = false;
-            mesh.renderOrder = 3;
+            mesh.renderOrder = 2;
             scene.add(mesh);
+            this.signMesh = mesh;
         }
-        if (structGeos.length) {
-            const structMesh = new THREE.Mesh(mergeGeometries(structGeos, false),
+        if (bezelGeos.length) {
+            const structMesh = new THREE.Mesh(
+                mergeGeometries(bezelGeos, false),
                 new THREE.MeshStandardMaterial({
-                    vertexColors: true, metalness: 0.25, roughness: 0.55, envMapIntensity: 0
-                }));
+                    vertexColors: true, metalness: 0.3, roughness: 0.55
+                })
+            );
             structMesh.matrixAutoUpdate = false;
             scene.add(structMesh);
         }
         this.signCount = signs.length;
     },
+
 
     // ── PROPS: trees, lamps, benches, poles, containers, ships ───────────────
     _buildProps(scene) {
