@@ -142,6 +142,7 @@ export const World = {
         scene.add(this.ambient);
 
         this._buildGround(scene);
+        this._buildGrass(scene);
         this._buildBuildings(scene);
         this._buildStreetGlass(scene);
         this._buildSigns(scene);
@@ -175,19 +176,35 @@ export const World = {
         base.rotation.x = -Math.PI / 2; base.position.y = -2;
         scene.add(base);
 
-        // District tiles (merged, vertex-colored)
+        // District tiles — parks/forests/suburbs get grass texture; others vertex colour
         const tiles = [];
+        const grassTiles = [];
         for (const d of City.districts) {
             const g = new THREE.PlaneGeometry(CELL_W, CELL_D);
             g.rotateX(-Math.PI / 2);
-            g.translate(d.cx, 0, d.cz);
-            tiles.push(paint(g, d.biomeDef.ground));
+            g.translate(d.cx, 0.02, d.cz);
+            if (d.biome === 'park' || d.biome === 'forest' || d.biome === 'suburban') {
+                const uv = g.attributes.uv;
+                for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * 16, uv.getY(i) * 16);
+                grassTiles.push(g);
+            } else {
+                tiles.push(paint(g, d.biomeDef.ground));
+            }
         }
-        // Outskirts green ring inside the perimeter road
-        const tilesMesh = new THREE.Mesh(mergeGeometries(tiles, false),
-            new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
-        tilesMesh.matrixAutoUpdate = false;
-        scene.add(tilesMesh);
+        if (tiles.length) {
+            const tilesMesh = new THREE.Mesh(mergeGeometries(tiles, false),
+                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
+            tilesMesh.matrixAutoUpdate = false;
+            scene.add(tilesMesh);
+        }
+        if (grassTiles.length) {
+            const grassMesh = new THREE.Mesh(
+                mergeGeometries(grassTiles, false),
+                new THREE.MeshLambertMaterial({ map: TEX.grassGround(), color: 0xc8e0b8 })
+            );
+            grassMesh.matrixAutoUpdate = false;
+            scene.add(grassMesh);
+        }
 
         // ── Carriageways ────────────────────────────────────────────────
         // The asphalt texture carries NO lane markings: it tiles in both
@@ -334,6 +351,101 @@ export const World = {
         scene.add(m);
     },
 
+
+    /** Instanced grass blades for park / forest / plaza cells — breaks up flat green slabs. */
+    _buildGrass(scene) {
+        const spots = [];
+        for (const d of City.districts) {
+            if (!['park', 'forest', 'plaza', 'suburban', 'academic'].includes(d.biome)) continue;
+            // denser in true parks/forests
+            const n = d.biome === 'forest' ? 900
+                : d.biome === 'park' ? 700
+                : d.biome === 'plaza' ? 220
+                : 180;
+            const pad = d.biome === 'park' || d.biome === 'forest' ? 40 : 80;
+            for (let i = 0; i < n; i++) {
+                const gx = d.cx + (rng() - 0.5) * (CELL_W - pad);
+                const gz = d.cz + (rng() - 0.5) * (CELL_D - pad);
+                // keep off road corridors through district centre
+                if (Math.abs(gx - d.cx) < 36 && Math.abs(gz - d.cz) < 36) continue;
+                // avoid building footprints roughly
+                let hit = false;
+                for (const p of G.placements) {
+                    if (p.district !== d.id) continue;
+                    if (Math.abs(gx - p.x) < p.w * 0.55 && Math.abs(gz - p.z) < p.d * 0.55) { hit = true; break; }
+                }
+                if (hit) continue;
+                spots.push({
+                    x: gx, z: gz,
+                    h: 2.2 + rng() * 4.5,
+                    s: 0.7 + rng() * 0.9,
+                    yaw: rng() * Math.PI,
+                    hue: d.biome === 'forest' ? 0.28 + rng() * 0.06 : 0.30 + rng() * 0.08
+                });
+            }
+        }
+        if (spots.length < 20) return;
+
+        // Crossed-card blade (two thin quads) reads as a tuft from any angle
+        const blade = new THREE.PlaneGeometry(1.1, 1);
+        blade.translate(0, 0.5, 0);
+        const blade2 = blade.clone();
+        blade2.rotateY(Math.PI / 2);
+        const geo = mergeGeometries([blade, blade2], false);
+
+        // Vertex colours green
+        const n = geo.attributes.position.count;
+        const cols = new Float32Array(n * 3);
+        for (let i = 0; i < n; i++) {
+            // tip brighter
+            const y = geo.attributes.position.getY(i);
+            const g = 0.35 + y * 0.45;
+            cols[i * 3] = 0.15; cols[i * 3 + 1] = g; cols[i * 3 + 2] = 0.12;
+        }
+        geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+
+        const mat = new THREE.MeshLambertMaterial({
+            vertexColors: true,
+            side: THREE.DoubleSide,
+            // slight alpha at tips would need texture; keep solid for perf
+        });
+        const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
+        mesh.frustumCulled = true;
+        mesh.name = 'grass';
+        const dummy = new THREE.Object3D();
+        const c = new THREE.Color();
+        spots.forEach((s, i) => {
+            dummy.position.set(s.x, 0, s.z);
+            dummy.rotation.set((rng() - 0.5) * 0.25, s.yaw, (rng() - 0.5) * 0.2);
+            dummy.scale.set(s.s * 1.4, s.h, s.s * 1.4);
+            dummy.updateMatrix();
+            mesh.setMatrixAt(i, dummy.matrix);
+            c.setHSL(s.hue, 0.55 + rng() * 0.25, 0.28 + rng() * 0.18);
+            mesh.setColorAt(i, c);
+        });
+        mesh.instanceMatrix.needsUpdate = true;
+        if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+        scene.add(mesh);
+        this.grassMesh = mesh;
+
+        // Soft ground noise texture on park district tiles already exists as flat colour;
+        // add a few larger "tuft clumps" as low hemispheres for depth
+        const clumpSpots = spots.filter((_, i) => i % 18 === 0).slice(0, 120);
+        if (clumpSpots.length) {
+            const clumpGeo = new THREE.SphereGeometry(1, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2);
+            const clumpMat = new THREE.MeshLambertMaterial({ color: 0x3a7a32 });
+            const clumps = new THREE.InstancedMesh(clumpGeo, clumpMat, clumpSpots.length);
+            clumpSpots.forEach((s, i) => {
+                dummy.position.set(s.x, 0, s.z);
+                dummy.rotation.set(0, s.yaw, 0);
+                dummy.scale.set(3 + rng() * 4, 1.2 + rng() * 1.5, 3 + rng() * 4);
+                dummy.updateMatrix();
+                clumps.setMatrixAt(i, dummy.matrix);
+            });
+            clumps.instanceMatrix.needsUpdate = true;
+            scene.add(clumps);
+        }
+    },
     // ── BUILDINGS ────────────────────────────────────────────────────────────
     _buildBuildings(scene) {
         const tiers = [
@@ -957,11 +1069,13 @@ export const World = {
     },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
-        // Camera-facing sprites with a unique canvas texture each.
-        // Atlas + wall planes kept failing visually (blank teal slabs); sprites always show text.
+        // Mesh planes + unique canvas map each. Updated with lookAt(camera) every frame
+        // so text stays readable. No sprites (SpriteMaterial + canvas was rendering as
+        // solid brand-colour slabs with no visible glyphs on some GPU/browser combos).
         const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
             'monument', 'solar', 'wind', 'dam']);
 
+        this.signMeshes = [];
         const group = new THREE.Group();
         group.name = 'buildingSigns';
         let count = 0;
@@ -1006,70 +1120,58 @@ export const World = {
                 : b.type === 'newspaper' ? '#fbbf24'
                 : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
                 : '#22d3ee';
-            let label = b.id === 'black_market' ? 'THE UNDERGROUND'
-                : String(b.name || b.id || 'BUILDING').toUpperCase();
-            if (!label.trim()) label = 'BUILDING';
+            const label = b.id === 'black_market' ? 'THE UNDERGROUND'
+                : String(b.name || b.id || 'BUILDING');
 
             const { nx, nz } = faceFor(p);
-            const OPEN = new Set(['arena', 'black_market', 'nuclear', 'coal', 'dish', 'metro']);
-            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            const sw = Math.min(Math.max(faceW * 0.5, 52), Math.min(faceW * 0.9, 130));
-            const sh = Math.max(18, sw / 3.5);
-            const gap = pylon ? 20 : 8;
-            // hang out in front of facade so it never clips into the wall
+            const sw = Math.min(Math.max(faceW * 0.52, 56), Math.min(faceW * 0.88, 140));
+            const sh = Math.max(20, sw / 3.4);
+            // well clear of facade / glass
+            const gap = 14;
             const bx = p.x + nx * (halfOut + gap);
             const bz = p.z + nz * (halfOut + gap);
-            const mountY = pylon
-                ? 42
-                : Math.min(Math.max(FLOOR_H * 1.5, 34), Math.min((p.h || 48) * 0.45, 52));
+            const mountY = Math.min(
+                Math.max(FLOOR_H * 1.55, 36),
+                Math.min((p.h || 48) * 0.48, 56)
+            );
 
             let map;
             try {
-                map = TEX.makeSignPlate(label, color, b.emoji || '');
+                map = TEX.makeSignPlate(label, color, '');
             } catch (e) {
-                console.warn('[signs] texture failed', b.id, e);
+                console.warn('[signs] makeSignPlate failed', b.id, e);
                 continue;
             }
 
-            // Sprite always faces the camera — text is always readable
-            const mat = new THREE.SpriteMaterial({
-                map,
-                transparent: true,
-                depthTest: true,
-                depthWrite: false,
-                sizeAttenuation: true,
-                toneMapped: false
-            });
-            const spr = new THREE.Sprite(mat);
-            // world size ≈ sw x sh
-            spr.scale.set(sw, sh, 1);
-            spr.position.set(bx, mountY, bz);
-            spr.center.set(0.5, 0.5);
-            spr.renderOrder = 4;
-            group.add(spr);
+            // Dark backer (thin box behind the text plane)
+            const back = new THREE.Mesh(
+                new THREE.BoxGeometry(sw + 2, sh + 2, 2.5),
+                new THREE.MeshStandardMaterial({ color: 0x0a0e14, metalness: 0.25, roughness: 0.55 })
+            );
+            back.position.set(bx - nx * 1.4, mountY, bz - nz * 1.4);
+            // face outward
+            back.lookAt(bx + nx * 10, mountY, bz + nz * 10);
+            group.add(back);
 
-            // Dark plate behind sprite (gives thickness / post feel for pylons)
-            if (pylon) {
-                const postMat = new THREE.MeshStandardMaterial({ color: 0x1a1f28, metalness: 0.35, roughness: 0.55 });
-                for (const side of [-1, 1]) {
-                    const tx = -nz * side * (sw * 0.28);
-                    const tz = nx * side * (sw * 0.28);
-                    const postH = Math.max(14, mountY - 4);
-                    const post = new THREE.Mesh(new THREE.BoxGeometry(3.2, postH, 3.2), postMat);
-                    post.position.set(bx + tx, postH / 2, bz + tz);
-                    group.add(post);
-                }
-                const board = new THREE.Mesh(
-                    new THREE.BoxGeometry(sw * 0.95, sh * 0.95, 2),
-                    new THREE.MeshStandardMaterial({ color: 0x0a0e14, metalness: 0.3, roughness: 0.5 })
-                );
-                board.position.set(bx - nx * 3, mountY, bz - nz * 3);
-                // orient board roughly toward facade normal
-                board.rotation.y = Math.atan2(nx, nz);
-                group.add(board);
-            }
+            // Textured plate — MeshBasic (unlit), pure white * map
+            const mat = new THREE.MeshBasicMaterial({
+                map,
+                color: 0xffffff,
+                side: THREE.DoubleSide,
+                toneMapped: false,
+                transparent: false,
+                depthWrite: true,
+                depthTest: true
+            });
+            const plate = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
+            plate.position.set(bx, mountY, bz);
+            plate.lookAt(bx + nx * 10, mountY, bz + nz * 10);
+            plate.userData.isSign = true;
+            plate.renderOrder = 3;
+            group.add(plate);
+            this.signMeshes.push(plate);
 
             count++;
         }
@@ -1077,10 +1179,9 @@ export const World = {
         scene.add(group);
         this.signGroup = group;
         this.signCount = count;
-        if (typeof console !== 'undefined') {
-            console.log('[SC-FP] building signs:', count);
-        }
+        console.log('[SC-FP] building signs (mesh):', count);
     },
+
 
 
 
@@ -1433,6 +1534,13 @@ export const World = {
         if (this.waterTex) {
             this.waterTex.offset.x = t * 0.008;
             this.waterTex.offset.y = Math.sin(t * 0.1) * 0.03;
+        }
+        // Keep sign plates facing the player (yaw only) so labels stay readable
+        if (this.signMeshes?.length && G.camera) {
+            const cx = G.camera.position.x, cz = G.camera.position.z;
+            for (const m of this.signMeshes) {
+                m.lookAt(cx, m.position.y, cz);
+            }
         }
     }
 };

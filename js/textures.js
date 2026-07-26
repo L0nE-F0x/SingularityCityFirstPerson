@@ -340,64 +340,58 @@ export function facade(floors, opts = {}) {
 // All building signs on ONE 4096×2048 texture → merged quads → 1 draw call.
 // High-contrast readable text; never empty boards; neon-friendly plates.
 /** One full-bleed sign plate texture (no atlas UV math — always readable). */
+/** Full-bleed sign texture. ASCII-only label so glyph fallback never blanks the canvas. */
 export function makeSignPlate(text, color = '#22d3ee', emoji = '') {
-    const W = 512, H = 128;
-    const [c, x] = canvas(W, H);
-    // Full opaque background
-    x.fillStyle = '#0a101c';
+    const W = 512, H = 140;
+    const canvasEl = document.createElement('canvas');
+    canvasEl.width = W;
+    canvasEl.height = H;
+    const x = canvasEl.getContext('2d', { alpha: false });
+    // solid dark bg (alpha:false canvas — no transparent weirdness)
+    x.fillStyle = '#0b1220';
     x.fillRect(0, 0, W, H);
-    // Inner panel
+    // inner panel
     x.fillStyle = '#111827';
-    x.fillRect(6, 6, W - 12, H - 12);
-    // Neon border
-    const neon = color || '#22d3ee';
+    x.fillRect(8, 8, W - 16, H - 16);
+    // border
+    const neon = (typeof color === 'string' && color.startsWith('#')) ? color : '#22d3ee';
     x.strokeStyle = neon;
-    x.lineWidth = 6;
-    x.shadowColor = neon;
-    x.shadowBlur = 16;
-    x.strokeRect(8, 8, W - 16, H - 16);
-    x.shadowBlur = 0;
-    x.strokeStyle = 'rgba(255,255,255,0.45)';
+    x.lineWidth = 8;
+    x.strokeRect(10, 10, W - 20, H - 20);
+    x.strokeStyle = '#ffffff';
     x.lineWidth = 2;
-    x.strokeRect(12, 12, W - 24, H - 24);
+    x.strokeRect(18, 18, W - 36, H - 36);
 
-    // Label
-    let label = String(text || 'BUILDING').trim().toUpperCase();
-    if (!label) label = 'BUILDING';
+    // sanitize label to printable ASCII-ish
+    let label = String(text || 'BUILDING').toUpperCase()
+        .replace(/[^\w\s\-\.'&]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'BUILDING';
+
     x.textAlign = 'center';
     x.textBaseline = 'middle';
-    // emoji left
-    if (emoji) {
-        x.textAlign = 'left';
-        x.font = '40px sans-serif';
-        x.fillStyle = '#ffffff';
-        x.fillText(String(emoji).slice(0, 3), 22, H / 2);
-        x.textAlign = 'center';
-    }
-    let fs = 40;
-    x.font = `bold ${fs}px monospace, Consolas, "Courier New", sans-serif`;
-    const maxW = emoji ? W - 100 : W - 40;
-    while (x.measureText(label).width > maxW && fs > 14) {
+    let fs = 44;
+    x.font = 'bold ' + fs + 'px monospace';
+    while (x.measureText(label).width > W - 48 && fs > 16) {
         fs -= 2;
-        x.font = `bold ${fs}px monospace, Consolas, "Courier New", sans-serif`;
+        x.font = 'bold ' + fs + 'px monospace';
     }
-    // outline + fill
-    x.lineWidth = 5;
+    // black outline
+    x.lineWidth = 6;
     x.strokeStyle = '#000000';
-    x.strokeText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
+    x.strokeText(label, W / 2, H / 2);
+    // neon then white
     x.fillStyle = neon;
-    x.shadowColor = neon;
-    x.shadowBlur = 10;
-    x.fillText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
-    x.shadowBlur = 0;
+    x.fillText(label, W / 2, H / 2);
     x.fillStyle = '#ffffff';
-    x.fillText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
+    x.fillText(label, W / 2, H / 2);
 
-    const t = tex(c);
+    const t = new THREE.CanvasTexture(canvasEl);
+    t.colorSpace = THREE.SRGBColorSpace;
     t.anisotropy = 4;
-    t.generateMipmaps = true;
-    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.minFilter = THREE.LinearFilter;
     t.magFilter = THREE.LinearFilter;
+    t.generateMipmaps = false;
     t.needsUpdate = true;
     return t;
 }
@@ -469,6 +463,44 @@ function roundRect(x, px, py, w, h, r) {
 // anything painted into it (there used to be a centre line here) shows up as a
 // grid running across the road as well as along it. Markings are geometry, in
 // world.js `_buildRoadMarkings`.
+
+/** Seamless grassy ground tile for parks / lawns. */
+export function grassGround() {
+    const [c, x] = canvas(256, 256);
+    // base lawn
+    const g = x.createLinearGradient(0, 0, 256, 256);
+    g.addColorStop(0, '#3a6b32'); g.addColorStop(0.5, '#2f5a2a'); g.addColorStop(1, '#356330');
+    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+    // blade streaks
+    for (let i = 0; i < 2200; i++) {
+        const px = Math.random() * 256, py = Math.random() * 256;
+        const h = 4 + Math.random() * 10;
+        x.strokeStyle = Math.random() < 0.5
+            ? `rgba(90,160,70,${0.25 + Math.random() * 0.35})`
+            : `rgba(30,70,25,${0.2 + Math.random() * 0.3})`;
+        x.lineWidth = 0.8 + Math.random();
+        x.beginPath();
+        x.moveTo(px, py);
+        x.lineTo(px + (Math.random() - 0.5) * 3, py - h);
+        x.stroke();
+    }
+    // dark patches / bare dirt
+    for (let i = 0; i < 30; i++) {
+        x.fillStyle = `rgba(60,45,30,${0.08 + Math.random() * 0.12})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 18, 5 + Math.random() * 10, Math.random(), 0, Math.PI * 2);
+        x.fill();
+    }
+    // light flower flecks
+    for (let i = 0; i < 40; i++) {
+        x.fillStyle = Math.random() < 0.5 ? 'rgba(255,240,180,0.35)' : 'rgba(200,120,160,0.3)';
+        x.fillRect(Math.random() * 256, Math.random() * 256, 1.5, 1.5);
+    }
+    const t = tex(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(6, 6);
+    return t;
+}
 export function road() {
     const [c, x] = canvas(256, 256);
     // layered asphalt base
