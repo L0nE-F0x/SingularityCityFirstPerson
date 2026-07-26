@@ -10,11 +10,11 @@
    as well 3000 units down as it does on the street.
 
    The city meshes are hidden while you are inside, so an interior renders in
-   about six draw calls.
+   a handful of draw calls (merged shell + glow + floor + sign).
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { G, EYE_H } from './state.js';
+import { G } from './state.js';
 import { LABS } from './data.js';
 import * as TEX from './textures.js';
 
@@ -49,11 +49,16 @@ export const Interior = {
         this.group.position.set(0, FLOOR_Y, 0);
         this.group.visible = false;
         scene.add(this.group);
-        // modest quality lift: warm fill light for interiors only
-        this._fillLight = new THREE.PointLight(0xfff0dd, 0.85, 900, 2);
-        this._fillLight.position.set(0, 70, 0);
+        // warm fill for interiors (tinted per-theme on enter/build)
+        this._fillLight = new THREE.PointLight(0xfff0dd, 0.95, 1100, 2);
+        this._fillLight.position.set(0, 72, 0);
         this._fillLight.visible = false;
         scene.add(this._fillLight);
+        // secondary cool rim so metal/lift doors read
+        this._rimLight = new THREE.PointLight(0xb8d4ff, 0.35, 700, 2);
+        this._rimLight.position.set(-200, 50, 0);
+        this._rimLight.visible = false;
+        scene.add(this._rimLight);
         document.addEventListener('keydown', e => {
             if (!this.building || G.panelOpen || G.ridingMetro) return;
             // F cycles floors from anywhere indoors; digits work at the lift
@@ -135,7 +140,7 @@ export const Interior = {
         const storeys = Math.max(1, Math.min(b.fl || 1, 14));
         if (storeys <= 1) {
             // multi-room feel for special destinations even if fl=1 in data
-            if (['court','mission','power','vc','agents','conference','backbone','datacenter'].includes(th.cat)) return 1;
+            if (['court', 'mission', 'power', 'vc', 'agents', 'conference', 'backbone', 'datacenter'].includes(th.cat)) return 1;
             return 0;
         }
         // floors 0..storeys-1 (lobby through top floor)
@@ -144,7 +149,7 @@ export const Interior = {
 
     // ── the room ─────────────────────────────────────────────────────────────
     _build(b, floorIdx = 0) {
-        // clear the previous dressing
+        // clear the previous dressing (all maps here are per-build, not shared caches)
         for (const m of [...this.group.children]) {
             this.group.remove(m);
             m.geometry?.dispose();
@@ -161,16 +166,29 @@ export const Interior = {
             th.cat = 'platform';
             th.wall = 0x0f172a; th.ceil = 0x020617; th.floor = 0x1e293b; th.lamp = 0xfbbf24; th.dim = true;
         } else if (floorIdx > 0 && th.cat === 'office') {
-            th.cat = top ? 'boardroom' : 'office';
-            if (top) { th.wall = 0x1e293b; th.ceil = 0x0f172a; th.floor = 0x334155; th.lamp = 0x38bdf8; th.dim = true; }
+            if (top) {
+                th.cat = 'boardroom';
+                th.wall = 0x1e293b; th.ceil = 0x0f172a; th.floor = 0x334155; th.lamp = 0x38bdf8; th.dim = true;
+            } else {
+                th.cat = 'openplan'; // mid-floor cubicle farm
+            }
         } else if (floorIdx > 0 && th.cat === 'embassy') {
             th.accent = top ? '#ef4444' : '#3b82f6';
+            if (top) th.cat = 'boardroom';
+        } else if (floorIdx > 0 && th.cat === 'vc') {
+            th.cat = top ? 'boardroom' : 'vc';
+            if (top) { th.wall = 0x0f172a; th.ceil = 0x020617; th.floor = 0x1e293b; th.lamp = 0xfbbf24; th.dim = true; }
+        } else if (floorIdx > 0 && th.cat === 'agents') {
+            th.cat = top ? 'agents' : 'agents';
         } else if (floorIdx > 0 && th.cat === 'datacenter') {
-            th.cat = top ? 'datacenter' : 'datacenter';
+            // denser hall upstairs — same cat, dress uses floorIdx
+        } else if (floorIdx > 0 && th.cat === 'bar') {
+            th.cat = top ? 'bar' : 'bar'; // VIP tint on top
+            if (top) { th.lamp = 0xfbbf24; th.accent = '#fbbf24'; }
         } else if (floorIdx > 0 && th.cat === 'home') {
-            th.cat = top ? 'home' : 'home';
+            // keep home
         }
-        const parts = [];     // lit surfaces (lambert, vertex-coloured)
+        const parts = [];     // lit surfaces (standard, vertex-coloured)
         const glow = [];      // self-lit surfaces (basic, vertex-coloured)
         const box = (w, h, d, x, y, z, hex, arr = parts) => {
             const g = new THREE.BoxGeometry(w, h, d);
@@ -194,26 +212,43 @@ export const Interior = {
             box(sideW, ROOM_H, WALL, s * (DOOR_W / 2 + sideW / 2), ROOM_H / 2, ROOM_D / 2, th.wall);
         }
         box(DOOR_W, ROOM_H - 62, WALL, 0, ROOM_H - (ROOM_H - 62) / 2, ROOM_D / 2, th.wall);
-        // skirting + accent band at head height
-        box(ROOM_W - WALL, 5, 2, 0, 2.5, -ROOM_D / 2 + WALL / 2 + 1, 0x000000);
+        // skirting + chair rail + accent band at head height
+        box(ROOM_W - WALL, 5, 2, 0, 2.5, -ROOM_D / 2 + WALL / 2 + 1, 0x1a1a1a);
+        box(ROOM_W - WALL, 3, 1.5, 0, 36, -ROOM_D / 2 + WALL / 2 + 1, 0x2a2a2a);
         lit(ROOM_W - WALL, 6, 2, 0, 62, -ROOM_D / 2 + WALL / 2 + 1, accent.getHex());
+        // side-wall accent rails
+        for (const sx of [-1, 1]) {
+            lit(2, 4, ROOM_D - 40, sx * (ROOM_W / 2 - WALL / 2 - 1), 62, 0, accent.getHex());
+            box(2, 4, ROOM_D - 40, sx * (ROOM_W / 2 - WALL / 2 - 1), 2.5, 0, 0x1a1a1a);
+        }
 
         // ceiling light panels — colour + density set the mood
-        const panels = th.dim ? [[-1, -1], [1, 1]] : [[-1, -1], [0, -1], [1, -1], [-1, 0], [0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+        const panels = th.dim
+            ? [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]
+            : [[-1, -1], [0, -1], [1, -1], [-1, 0], [0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
         for (const [ix, iz] of panels) lit(120, 2, 70, ix * 175, ROOM_H - 3, iz * 140, th.lamp);
+        // cove LEDs along ceiling perimeter
+        lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, -ROOM_D / 2 + 18, th.lamp);
+        lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, ROOM_D / 2 - 18, th.lamp);
 
         this._dress(b, box, lit, th, accent, floorIdx);
-        if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent);
+        if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent, floorIdx);
 
-        // floor indicator plaque
+        // floor indicator plaque (back wall)
         lit(60, 18, 2, 200, 50, -ROOM_D / 2 + WALL / 2 + 2, 0x111827);
         this._floorLabel = `F${floorIdx}${this.maxFloor ? '/' + this.maxFloor : ''}`;
 
         if (parts.length) {
             const shell = new THREE.Mesh(mergeGeometries(parts, false),
-                new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0.04 }));
+                new THREE.MeshStandardMaterial({
+                    vertexColors: true,
+                    roughness: 0.82,
+                    metalness: 0.06,
+                    flatShading: false
+                }));
             shell.matrixAutoUpdate = false;
             this.group.add(shell);
+            this._shell = shell;
         }
 
         if (glow.length) {
@@ -223,13 +258,18 @@ export const Interior = {
             this.group.add(glowMesh);
         }
 
-        // floor — one polished-stone texture tinted per theme
+        // floor — polished stone, tinted per theme
         const floorGeo = new THREE.PlaneGeometry(ROOM_W, ROOM_D);
         floorGeo.rotateX(-Math.PI / 2);
         const fuv = floorGeo.attributes.uv;
         for (let i = 0; i < fuv.count; i++) fuv.setXY(i, fuv.getX(i) * 7, fuv.getY(i) * 6);
-        const floor = new THREE.Mesh(floorGeo,
-            new THREE.MeshStandardMaterial({ map: TEX.lobbyFloor(), color: th.floor, roughness: 0.55, metalness: 0.08 }));
+        const floorMat = new THREE.MeshStandardMaterial({
+            map: TEX.lobbyFloor(),
+            color: th.floor,
+            roughness: th.dim ? 0.72 : 0.48,
+            metalness: th.dim ? 0.12 : 0.08
+        });
+        const floor = new THREE.Mesh(floorGeo, floorMat);
         floor.matrixAutoUpdate = false;
         this.group.add(floor);
 
@@ -241,6 +281,19 @@ export const Interior = {
             new THREE.MeshBasicMaterial({ map: signTex, transparent: true }));
         sign.position.set(0, 74, -ROOM_D / 2 + WALL / 2 + 3);
         this.group.add(sign);
+        this._signMesh = sign;
+
+        // theme-tinted fill lights
+        if (this._fillLight) {
+            this._fillLight.color.setHex(th.lamp);
+            this._fillLight.intensity = th.dim ? 0.7 : 1.05;
+            this._fillLight.position.set(0, 72, 0);
+        }
+        if (this._rimLight) {
+            this._rimLight.color.setHex(accent.getHex());
+            this._rimLight.intensity = this.maxFloor > 0 ? 0.55 : 0.3;
+            this._rimLight.position.set(-ROOM_W / 2 + 40, 48, 0);
+        }
 
         // colliders, in interior-local coords offset to world
         this._colliders = [];
@@ -262,107 +315,198 @@ export const Interior = {
         this._liftZones = [];
         const solid = (x, z, w, d) => this._propColliders.push(
             { x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
-        const accentHex = '#' + accent.getHexString();
         const cat = th.cat;
-        let liftBank = true;
+        const top = this.maxFloor > 0 && floor === this.maxFloor;
+
+        // ── small helpers (all merge into parts/glow) ───────────────────────
+        const desk = (x, z, rot = 0) => {
+            // simple axis-aligned desk + chair (rot ignored for merge simplicity)
+            box(70, 28, 36, x, 14, z, 0x5c4033); solid(x, z, 70, 36);
+            lit(24, 14, 1, x - 10, 30, z - 16, 0x1e293b);
+            lit(10, 6, 8, x + 18, 30, z - 8, 0x94a3b8); // keyboard glow-ish
+            box(22, 22, 22, x, 11, z + 28, 0x374151); // chair
+        };
+        const booth = (x, z, col = 0x3b1f3a) => {
+            box(70, 36, 50, x, 18, z, col); solid(x, z, 70, 50);
+            box(70, 28, 8, x, 32, z - 20, col);
+            lit(50, 14, 1, x, 34, z - 10, 0x1a1020);
+        };
+        const plant = (x, z, h = 40) => {
+            box(18, 12, 18, x, 6, z, 0x4b5563); solid(x, z, 18, 18);
+            box(14, h * 0.55, 14, x, 12 + h * 0.28, z, 0x166534);
+            box(20, h * 0.35, 20, x, 12 + h * 0.55, z, 0x15803d);
+        };
+        const screenWall = (x, y, z, w, h, col) => {
+            box(w + 6, h + 6, 3, x, y, z, 0x111827);
+            lit(w, h, 1.5, x, y, z + 1, col);
+        };
+        const rack = (x, z, ledCol) => {
+            box(46, 84, 34, x, 42, z, 0x14181e); solid(x, z, 46, 34);
+            box(40, 72, 1.5, x, 44, z + 17.5, 0x0a0d12);
+            for (let l = 0; l < 8; l++) {
+                lit(3, 3, 1, x - 14 + (l % 4) * 10, 18 + Math.floor(l / 4) * 28, z + 18, ledCol);
+            }
+            // front status bar
+            lit(30, 2, 1, x, 78, z + 18, ledCol);
+        };
 
         if (cat === 'jail') {
-            // cell block: bars + bench
             for (let i = 0; i < 4; i++) {
                 const cx = -180 + i * 100;
                 box(80, 70, 60, cx, 35, -120, 0x1a1e24); solid(cx, -120, 80, 60);
-                for (let bar = 0; bar < 5; bar++) lit(2, 60, 2, cx - 30 + bar * 15, 35, -88, 0x94a3b8);
+                for (let bar = 0; bar < 6; bar++) lit(2, 60, 2, cx - 32 + bar * 12, 35, -88, 0x94a3b8);
+                box(60, 8, 30, cx, 8, -120, 0x2a3038); // bunk
             }
             box(200, 40, 40, 0, 20, 80, 0x2a3038); solid(0, 80, 200, 40);
+            box(40, 90, 40, 200, 45, -40, 0x374151); solid(200, -40, 40, 40); // guard post
             lit(120, 30, 2, 0, 50, -ROOM_D / 2 + 20, 0xff4466);
-            liftBank = false;
+            lit(ROOM_W - 60, 2, 2, 0, ROOM_H - 8, 0, 0xff4466);
         } else if (cat === 'court') {
-            // bench, witness stand, gallery
-            box(220, 50, 50, 0, 25, -160, 0x6b5136); solid(0, -160, 220, 50);
+            box(240, 54, 54, 0, 27, -160, 0x6b5136); solid(0, -160, 240, 54);
+            box(80, 8, 40, 0, 56, -160, 0x8a7048); // bench top
             box(40, 40, 40, -160, 20, -60, 0x8a7048); solid(-160, -60, 40, 40);
-            for (let r = 0; r < 3; r++) for (let c = 0; c < 6; c++) {
-                box(28, 18, 28, -100 + c * 40, 9, 40 + r * 40, 0x5a4634);
+            box(40, 40, 40, 160, 20, -60, 0x8a7048); solid(160, -60, 40, 40);
+            for (let r = 0; r < 4; r++) for (let c = 0; c < 7; c++) {
+                box(28, 18, 28, -120 + c * 40, 9, 30 + r * 38, 0x5a4634);
             }
-            lit(80, 20, 2, 0, 70, -130, 0xfbbf24);
-            liftBank = true;
+            box(50, 50, 30, 0, 25, -100, 0x4a3828); // witness
+            solid(0, -100, 50, 30);
+            lit(100, 24, 2, 0, 72, -130, 0xfbbf24);
+            plant(-220, 140); plant(220, 140);
         } else if (cat === 'embassy') {
-            // flag wall + reception + seals
-            const flagCols = [0x3b82f6, 0xef4444, 0xfbbf24, 0x22c55e];
-            for (let i = 0; i < 4; i++) lit(50, 34, 2, -120 + i * 70, 60, -ROOM_D / 2 + 14, flagCols[i]);
-            box(160, 34, 46, 0, 17, -100, 0xc0a070); solid(0, -100, 160, 46);
+            const flagCols = [0x3b82f6, 0xef4444, 0xfbbf24, 0x22c55e, 0xa855f7];
+            for (let i = 0; i < 5; i++) lit(44, 32, 2, -140 + i * 60, 58, -ROOM_D / 2 + 14, flagCols[i]);
+            box(170, 34, 48, 0, 17, -100, 0xc0a070); solid(0, -100, 170, 48);
+            lit(50, 20, 1, 0, 42, -122, 0x1e293b);
             box(40, 60, 40, 200, 30, 100, 0xe2e8f0); solid(200, 100, 40, 40);
-            liftBank = true;
+            box(40, 60, 40, -200, 30, 100, 0xe2e8f0); solid(-200, 100, 40, 40);
+            // lounge set
+            for (const [sx, sz] of [[120, 20], [180, 20], [120, 70], [180, 70]]) {
+                box(36, 14, 36, sx, 7, sz, 0x64748b); solid(sx, sz, 36, 36);
+            }
+            box(80, 12, 40, 150, 6, 45, 0x94a3b8);
+            plant(-220, 40); plant(220, -40);
+            screenWall(0, 50, -ROOM_D / 2 + 16, 120, 40, 0x3b82f6);
         } else if (cat === 'mission') {
-            // mission control: curved console wall + big screen
             box(400, 40, 50, 0, 20, -140, 0x1e293b); solid(0, -140, 400, 50);
-            for (let i = 0; i < 8; i++) lit(40, 24, 2, -140 + i * 40, 48, -160, [0x22d3ee, 0x5affc8, 0xfbbf24][i % 3]);
-            lit(280, 90, 2, 0, 50, -ROOM_D / 2 + 14, 0x0a2030);
-            for (let i = 0; i < 6; i++) lit(36, 28, 2, -100 + i * 40, 50, -ROOM_D / 2 + 16, 0x1a4a60);
-            liftBank = true;
+            for (let i = 0; i < 10; i++) lit(36, 22, 2, -160 + i * 36, 48, -160, [0x22d3ee, 0x5affc8, 0xfbbf24][i % 3]);
+            lit(300, 90, 2, 0, 50, -ROOM_D / 2 + 14, 0x0a2030);
+            for (let i = 0; i < 8; i++) lit(32, 26, 2, -120 + i * 36, 50, -ROOM_D / 2 + 16, 0x1a4a60);
+            // operator chairs
+            for (let i = -3; i <= 3; i++) box(22, 20, 22, i * 40, 10, -90, 0x334155);
+            // telemetry racks
+            for (const rx of [-220, 220]) {
+                box(40, 80, 30, rx, 40, 40, 0x1e293b); solid(rx, 40, 40, 30);
+                for (let l = 0; l < 6; l++) lit(4, 4, 1, rx, 20 + l * 12, 56, 0x5affc8);
+            }
+            lit(ROOM_W - 80, 2, 2, 0, ROOM_H - 8, 0, 0x22d3ee);
         } else if (cat === 'power') {
-            // control room: turbines panel + warning stripes
             box(300, 60, 40, 0, 30, -150, 0x2a3038); solid(0, -150, 300, 40);
-            for (let i = 0; i < 5; i++) lit(30, 30, 2, -100 + i * 50, 50, -128, 0xffd23a);
+            for (let i = 0; i < 6; i++) lit(28, 28, 2, -120 + i * 48, 50, -128, 0xffd23a);
             for (const s of [-1, 1]) lit(ROOM_W - 40, 1, 8, 0, 1, s * 120, 0xfbbf24);
             box(80, 80, 80, 200, 40, 40, 0x4a5058); solid(200, 40, 80, 80);
-            liftBank = true;
+            box(80, 80, 80, -200, 40, 40, 0x4a5058); solid(-200, 40, 80, 80);
+            // hazard posts (striped)
+            for (const px of [-100, 0, 100]) {
+                box(10, 50, 10, px, 25, 100, 0x1a1a1a);
+                for (let s = 0; s < 4; s++) lit(11, 6, 11, px, 12 + s * 12, 100, 0xfbbf24);
+            }
+            screenWall(0, 55, -ROOM_D / 2 + 16, 160, 50, 0xffd23a);
         } else if (cat === 'boardroom') {
-            box(240, 30, 100, 0, 15, -40, 0x1e293b); solid(0, -40, 240, 100);
-            for (let i = -3; i <= 3; i++) box(20, 24, 20, i * 32, 12, -100, 0x334155);
-            lit(160, 60, 2, 0, 50, -ROOM_D / 2 + 14, 0x38bdf8);
-            liftBank = true;
-        } else if (cat === 'datacenter') {
-            // NOC desk with monitors, then cold rows of blinking server racks
-            box(160, 34, 44, -150, 17, -150, 0x1c2128);
-            for (const mx of [-190, -150, -110]) lit(34, 22, 2, mx, 44, -168, 0x2aa0ff);
-            for (let row = 0; row < 2; row++) {
-                for (let i = 0; i < 6; i++) {
-                    const rx = -150 + i * 62, rz = -60 + row * 70;
-                    box(46, 84, 34, rx, 42, rz, 0x14181e);
-                    box(40, 72, 1.5, rx, 44, rz + 17.5, 0x0a0d12);
-                    // LED columns
-                    const col = [0x39ff88, 0x2aa0ff, 0xffd23a][(i + row) % 3];
-                    for (let l = 0; l < 6; l++) lit(3, 3, 1, rx - 14 + (l % 3) * 14, 22 + Math.floor(l / 3) * 30, rz + 18, col);
-                    solid(rx, rz, 46, 34);
+            box(260, 30, 110, 0, 15, -40, 0x1e293b); solid(0, -40, 260, 110);
+            lit(200, 2, 80, 0, 31, -40, 0x334155); // glass top sheen
+            for (let i = -4; i <= 4; i++) {
+                box(20, 24, 20, i * 28, 12, -110, 0x334155);
+                box(20, 24, 20, i * 28, 12, 30, 0x334155);
+            }
+            screenWall(0, 50, -ROOM_D / 2 + 14, 200, 70, 0x38bdf8);
+            for (let i = 0; i < 5; i++) lit(30, 20, 1, -80 + i * 40, 48, -ROOM_D / 2 + 16, 0x22c55e);
+            plant(-230, 120); plant(230, 120);
+            box(50, 40, 30, 200, 20, 100, 0x0f172a); solid(200, 100, 50, 30); // sideboard
+            lit(12, 20, 12, -200, 28, 80, 0xfde68a);
+        } else if (cat === 'openplan') {
+            // mid-floor cubicle farm — dense intentional office
+            for (let row = 0; row < 3; row++) {
+                for (let col = 0; col < 4; col++) {
+                    const x = -160 + col * 90, z = -100 + row * 80;
+                    box(70, 40, 4, x, 20, z - 18, 0xcbd5e1); // partition
+                    box(4, 40, 50, x - 32, 20, z, 0xcbd5e1);
+                    desk(x, z);
                 }
-                // overhead cable tray
-                box(400, 4, 10, -90, 82, -60 + row * 70, 0x3a4048);
             }
-            liftBank = true;
+            // printer / pantry
+            box(50, 40, 40, 220, 20, -140, 0x64748b); solid(220, -140, 50, 40);
+            lit(30, 10, 1, 220, 36, -118, 0x38bdf8);
+            box(80, 36, 40, -220, 18, 120, 0x5c4033); solid(-220, 120, 80, 40);
+            lit(20, 8, 20, -220, 40, 120, 0xffe4ac);
+            screenWall(0, 55, -ROOM_D / 2 + 14, 140, 40, 0x4aa0ff);
+            plant(240, 140); plant(-240, 140);
+        } else if (cat === 'datacenter') {
+            // NOC + cold-aisle racks
+            box(180, 34, 48, -150, 17, -160, 0x1c2128); solid(-150, -160, 180, 48);
+            for (const mx of [-200, -150, -100]) lit(36, 24, 2, mx, 44, -180, 0x2aa0ff);
+            const rows = floor > 0 ? 3 : 2;
+            for (let row = 0; row < rows; row++) {
+                for (let i = 0; i < 6; i++) {
+                    const rx = -150 + i * 62, rz = -50 + row * 70;
+                    const col = [0x39ff88, 0x2aa0ff, 0xffd23a][(i + row) % 3];
+                    rack(rx, rz, col);
+                }
+                box(400, 4, 12, -90, 82, -50 + row * 70, 0x3a4048); // cable tray
+                lit(380, 1, 2, -90, 84, -50 + row * 70, 0x2aa0ff);
+            }
+            // cold aisle floor strips
+            for (let row = 0; row < rows; row++) lit(360, 1, 8, -90, 1.2, -50 + row * 70, 0x0ea5e9);
+            // CRAC units
+            for (const cx of [-240, 240]) {
+                box(36, 70, 40, cx, 35, 140, 0x475569); solid(cx, 140, 36, 40);
+                lit(20, 8, 1, cx, 60, 160, 0x22d3ee);
+            }
+            screenWall(120, 50, -ROOM_D / 2 + 14, 100, 50, 0x2aa0ff);
         } else if (cat === 'bar') {
-            // long bar, back-bar shelf of glowing bottles, stools, neon strips
-            box(320, 40, 40, 0, 20, -150, 0x2a1c14);
-            box(326, 5, 46, 0, 42, -150, 0x5a3a22);
-            solid(0, -150, 326, 46);
-            for (let i = 0; i < 14; i++) {
-                const bx = -150 + i * 23;
-                lit(7, 20, 7, bx, 60, -172, [0xff5a8a, 0x5affc8, 0xffd23a, 0x8a5aff][i % 4]);
+            // long bar + bottles + stools + booths + dance floor
+            box(340, 40, 42, 0, 20, -150, 0x2a1c14);
+            box(346, 5, 48, 0, 42, -150, 0x5a3a22);
+            solid(0, -150, 346, 48);
+            for (let i = 0; i < 16; i++) {
+                const bx = -170 + i * 22;
+                lit(7, 22, 7, bx, 62, -172, [0xff5a8a, 0x5affc8, 0xffd23a, 0x8a5aff][i % 4]);
             }
-            box(300, 26, 6, 0, 70, -176, 0x160e12);       // back-bar wall
-            for (let i = -4; i <= 4; i++) {                // stools
-                box(16, 26, 16, i * 34, 13, -108, 0x241a20);
-                box(20, 4, 20, i * 34, 27, -108, 0x8a2a6a);
-                solid(i * 34, -108, 16, 16);
+            box(320, 28, 6, 0, 72, -176, 0x160e12);
+            for (let i = -5; i <= 5; i++) {
+                box(16, 26, 16, i * 30, 13, -108, 0x241a20);
+                box(20, 4, 20, i * 30, 27, -108, 0x8a2a6a);
+                solid(i * 30, -108, 16, 16);
             }
-            // neon strips down the side walls + a small dance floor
-            for (const s of [-1, 1]) lit(2, 4, 300, s * (ROOM_W / 2 - WALL), 66, -20, s > 0 ? 0xe879f9 : 0x5affc8);
+            // booths along right
+            for (let i = 0; i < 3; i++) booth(200, -40 + i * 70, 0x2a1830);
+            // stage / karaoke left-back
+            box(100, 12, 80, -200, 6, 80, 0x1a1020); solid(-200, 80, 100, 80);
+            lit(80, 40, 2, -200, 50, 40, top ? 0xfbbf24 : 0xe879f9);
+            for (const s of [-1, 1]) lit(2, 4, 320, s * (ROOM_W / 2 - WALL), 66, -10, s > 0 ? 0xe879f9 : 0x5affc8);
             for (let gx = -1; gx <= 1; gx++) for (let gz = 0; gz <= 2; gz++)
-                lit(44, 1, 44, gx * 60, 1.5, 60 + gz * 50, [0xe879f9, 0x5affc8, 0x8a5aff][(gx + gz + 2) % 3]);
-            liftBank = false;
+                lit(44, 1, 44, gx * 55, 1.5, 50 + gz * 48, [0xe879f9, 0x5affc8, 0x8a5aff][(gx + gz + 2) % 3]);
+            // DJ booth
+            box(60, 30, 40, 0, 15, 140, 0x1a1020); solid(0, 140, 60, 40);
+            lit(40, 16, 1, 0, 34, 120, 0xf472b6);
         } else if (cat === 'home') {
-            box(190, 26, 78, 96, 13, -140, 0x8a6a4a);       // sofa
+            box(190, 26, 78, 96, 13, -140, 0x8a6a4a);
             box(190, 30, 18, 96, 30, -170, 0x9a785a);
             solid(96, -140, 190, 78);
-            box(120, 6, 68, 96, 22, -46, 0x6d5238);         // coffee table
-            box(150, 84, 8, -150, 42, -172, 0x5a4634);      // media wall
-            lit(96, 54, 2, -150, 46, -167, 0x1a2a3a);       // TV screen (off-ish)
-            for (let sh = 0; sh < 4; sh++) box(90, 4, 24, -150, 14 + sh * 22, -150, 0x7a5c40);  // shelves
-            box(30, 60, 30, 250, 30, 150, 0x3a6b3a);        // big plant
-            lit(10, 44, 10, -250, 46, 150, 0xffe0a0);       // floor lamp
-            box(230, 2, 150, 60, 1.5, 40, 0x9a4a4a);        // rug
-            liftBank = true;
+            box(120, 6, 68, 96, 22, -46, 0x6d5238);
+            box(150, 84, 8, -150, 42, -172, 0x5a4634);
+            lit(96, 54, 2, -150, 46, -167, 0x1a2a3a);
+            for (let sh = 0; sh < 4; sh++) box(90, 4, 24, -150, 14 + sh * 22, -150, 0x7a5c40);
+            // kitchen island
+            box(100, 36, 50, -180, 18, 40, 0xd4c4a8); solid(-180, 40, 100, 50);
+            lit(16, 10, 16, -180, 40, 40, 0xffe4ac);
+            plant(250, 150, 50);
+            lit(10, 44, 10, -250, 46, 150, 0xffe0a0);
+            box(230, 2, 150, 60, 1.5, 40, 0x9a4a4a);
+            // dining
+            box(90, 28, 50, 160, 14, 100, 0x6d5238); solid(160, 100, 90, 50);
+            for (const s of [-1, 1]) box(18, 22, 18, 160 + s * 40, 11, 100, 0x5a4634);
         } else if (cat === 'robotics') {
-            // conveyor belt, an articulated robot arm, crates, safety line
             box(360, 22, 60, -20, 11, -140, 0x3a3f46);
             box(360, 3, 56, -20, 24, -140, 0x1a1c20);
             for (let i = 0; i < 9; i++) box(4, 26, 60, -190 + i * 42, 13, -140, 0x2a2e34);
@@ -372,213 +516,269 @@ export const Interior = {
             box(20, 44, 20, 150, 32, -60, 0xff8a3a);
             box(58, 14, 14, 175, 54, -60, 0xffa85a);
             box(14, 30, 14, 200, 40, -60, 0x2a2e34);
-            for (const [cx, cz] of [[-230, 40], [-190, 40], [-210, 76]]) {   // crates
+            for (const [cx, cz] of [[-230, 40], [-190, 40], [-210, 76], [-150, 60]]) {
                 box(36, 30, 36, cx, 15, cz, 0x8a6a3a); solid(cx, cz, 36, 36);
             }
-            box(6, 60, 6, 240, 30, -60, 0x2a2e34);           // tool post
-            for (const s of [-1, 1]) lit(ROOM_W - 40, 1, 6, 0, 1, s * 100, 0xffb020);  // safety lines
-            lit(70, 30, 2, 250, 46, -150, 0x39ff88);         // status board
-            liftBank = false;
+            box(6, 60, 6, 240, 30, -60, 0x2a2e34);
+            for (const s of [-1, 1]) lit(ROOM_W - 40, 1, 6, 0, 1, s * 100, 0xffb020);
+            lit(70, 30, 2, 250, 46, -150, 0x39ff88);
+            // workbench
+            box(120, 32, 50, 0, 16, 80, 0x4a453c); solid(0, 80, 120, 50);
+            for (let i = 0; i < 4; i++) lit(8, 8, 8, -30 + i * 20, 36, 70, 0xff8a3a);
         } else if (cat === 'longevity') {
-            // clinical benches, vial racks, sequencer cabinets, a DNA helix
             for (const bx of [-200, 200]) {
                 box(60, 30, 180, bx, 15, -40, 0xdfe8ea); solid(bx, -40, 60, 180);
-                for (let i = 0; i < 8; i++) lit(5, 12, 5, bx - 20 + (i % 4) * 13, 36, -100 + Math.floor(i / 4) * 24, [0x39ffcc, 0xff6ab0, 0xffe23a, 0x6aa0ff][i % 4]);
+                for (let i = 0; i < 10; i++) lit(5, 12, 5, bx - 20 + (i % 5) * 10, 36, -100 + Math.floor(i / 5) * 28, [0x39ffcc, 0xff6ab0, 0xffe23a, 0x6aa0ff][i % 4]);
             }
-            for (const sx of [-150, 150]) {                  // sequencer cabinets
+            for (const sx of [-150, 0, 150]) {
                 box(50, 78, 30, sx, 39, -172, 0xeef4f6); solid(sx, -172, 50, 30);
                 for (let l = 0; l < 8; l++) lit(4, 4, 1, sx - 16 + (l % 4) * 11, 30 + Math.floor(l / 4) * 24, -156, 0x22d3cc);
             }
-            // DNA double helix centrepiece
             for (let i = 0; i < 22; i++) {
                 const y = 8 + i * 4, a = i * 0.5;
                 lit(7, 5, 7, 40 + Math.cos(a) * 26, y, 40, 0x4aa0ff);
                 lit(7, 5, 7, 40 - Math.cos(a) * 26, y, 40, 0xff6ab0);
-                if (i % 2 === 0) box(52, 2, 2, 40, y, 40, 0xcfe0e2, undefined);
+                if (i % 2 === 0) box(52, 2, 2, 40, y, 40, 0xcfe0e2);
             }
             solid(40, 40, 20, 20);
-            liftBank = true;
+            // centrifuge + fridge
+            box(30, 40, 30, -80, 20, 120, 0xcbd5e1); solid(-80, 120, 30, 30);
+            lit(16, 6, 1, -80, 36, 136, 0x22d3cc);
+            box(40, 70, 30, 120, 35, 130, 0xe2e8f0); solid(120, 130, 40, 30);
+            lit(4, 50, 1, 120, 40, 146, 0x4ade80);
         } else if (cat === 'academic') {
-            // library: bookshelves lining the walls + reading tables
             for (const sx of [-235, 235]) {
-                box(30, 96, 260, sx, 48, -20, 0x6b5136); solid(sx, -20, 30, 260);
-                for (let sh = 0; sh < 5; sh++) box(26, 4, 250, sx, 18 + sh * 20, -20, 0x8a6a45);
-                for (let sh = 0; sh < 5; sh++) for (let bk = 0; bk < 20; bk++)
-                    box(3, 14, 11, sx + (sx > 0 ? -13 : 13), 26 + sh * 20, -140 + bk * 13, [0x9a3a3a, 0x3a5a9a, 0x3a7a4a, 0xb8863a][bk % 4]);
+                box(30, 96, 280, sx, 48, -10, 0x6b5136); solid(sx, -10, 30, 280);
+                for (let sh = 0; sh < 5; sh++) box(26, 4, 270, sx, 18 + sh * 18, -10, 0x8a6a45);
+                for (let sh = 0; sh < 5; sh++) for (let bk = 0; bk < 22; bk++)
+                    box(3, 14, 11, sx + (sx > 0 ? -13 : 13), 26 + sh * 18, -140 + bk * 12, [0x9a3a3a, 0x3a5a9a, 0x3a7a4a, 0xb8863a][bk % 4]);
             }
-            for (const [tx, tz] of [[-70, -40], [70, -40], [-70, 60], [70, 60]]) {
+            for (const [tx, tz] of [[-70, -40], [70, -40], [-70, 60], [70, 60], [0, 10]]) {
                 box(80, 30, 44, tx, 15, tz, 0x6d5238); solid(tx, tz, 80, 44);
-                lit(14, 22, 8, tx, 40, tz, 0xffe6a0);        // desk lamp
+                lit(14, 22, 8, tx, 40, tz, 0xffe6a0);
             }
-            box(50, 40, 34, 0, 20, -160, 0x5a4634);          // lectern
-            liftBank = true;
+            box(50, 40, 34, 0, 20, -160, 0x5a4634);
+            plant(0, 140);
         } else if (cat === 'press') {
-            // printing press: big machine with roller faces + paper stacks
             box(280, 70, 90, -20, 35, -140, 0x3a4048); solid(-20, -140, 280, 90);
-            for (let i = 0; i < 5; i++) box(84, 26, 8, -140 + i * 60, 40, -95, 0x22262c);  // roller housings
-            for (const [px, pz] of [[180, 40], [220, 40], [180, 90]]) {   // paper stacks
+            for (let i = 0; i < 5; i++) box(84, 26, 8, -140 + i * 60, 40, -95, 0x22262c);
+            for (const [px, pz] of [[180, 40], [220, 40], [180, 90], [220, 90]]) {
                 box(50, 40, 60, px, 20, pz, 0xe8e4d8); solid(px, pz, 50, 60);
             }
-            lit(120, 24, 2, -20, 52, -94, 0x39ff88);         // control panel
-            liftBank = false;
+            lit(120, 24, 2, -20, 52, -94, 0x39ff88);
+            // newsroom desks
+            for (let i = 0; i < 3; i++) desk(-100 + i * 90, 80);
+            screenWall(0, 55, -ROOM_D / 2 + 14, 160, 40, 0xfbbf24);
         } else if (cat === 'metro') {
-            // ticket hall: barriers, ticket machines, escalator well to platform
-            for (const gx of [-50, 50]) {
-                box(18, 40, 70, gx, 20, 20, 0x64748b); solid(gx, 20, 18, 70);
+            // ticket hall
+            for (const gx of [-60, -20, 20, 60]) {
+                box(14, 40, 70, gx, 20, 10, 0x64748b); solid(gx, 10, 14, 70);
             }
-            for (const mx of [-200, -140, 140, 200]) {
-                box(40, 50, 24, mx, 25, -140, 0x1e293b); solid(mx, -140, 40, 24);
-                lit(30, 20, 1, mx, 40, -127, 0x22d3ee);
+            for (const mx of [-210, -140, 140, 210]) {
+                box(42, 52, 26, mx, 26, -140, 0x1e293b); solid(mx, -140, 42, 26);
+                lit(32, 22, 1, mx, 42, -126, 0x22d3ee);
             }
-            // escalator down well (visual)
-            box(80, 4, 120, 180, 2, 40, 0x0ea5e9);
-            for (let i = 0; i < 8; i++) box(70, 3, 12, 180, 4 + i * 6, 80 - i * 12, 0x334155);
-            lit(100, 24, 2, 0, 60, -ROOM_D / 2 + 14, 0x22d3ee);
-            box(200, 40, 8, 0, 50, -ROOM_D / 2 + 20, 0x0f172a); // departure board frame
-            liftBank = true;
+            // escalator well
+            box(90, 4, 130, 180, 2, 40, 0x0ea5e9);
+            for (let i = 0; i < 10; i++) box(80, 3, 12, 180, 3 + i * 5.5, 90 - i * 12, 0x334155);
+            lit(4, 50, 4, 140, 30, 40, 0xfbbf24); // handrail glow posts
+            lit(4, 50, 4, 220, 30, 40, 0xfbbf24);
+            // departure board
+            box(220, 50, 8, 0, 55, -ROOM_D / 2 + 20, 0x0f172a);
+            lit(200, 40, 2, 0, 55, -ROOM_D / 2 + 14, 0x22d3ee);
+            for (let i = 0; i < 4; i++) lit(40, 8, 1, -75 + i * 50, 40, -ROOM_D / 2 + 16, 0x4ade80);
+            // map kiosk
+            box(30, 60, 20, -180, 30, 100, 0x334155); solid(-180, 100, 30, 20);
+            lit(24, 40, 1, -180, 36, 112, 0x38bdf8);
+            plant(240, 140, 30);
         } else if (cat === 'platform') {
-            // underground platform: tracks void, yellow line, benches, train indicator
-            box(ROOM_W - 40, 2, 40, 0, 1, -160, 0xfbbf24); // safety line
+            box(ROOM_W - 40, 2, 40, 0, 1, -160, 0xfbbf24);
             lit(ROOM_W - 80, 1, 6, 0, 1.5, -150, 0xfde68a);
-            // track pit (dark)
             box(ROOM_W - 20, 18, 80, 0, -6, -200, 0x020617);
             for (const rail of [-12, 12]) box(ROOM_W - 40, 2, 3, 0, 1, -200 + rail, 0x64748b);
-            // platform benches
-            for (const bx of [-180, -60, 60, 180]) {
+            // sleepers
+            for (let i = 0; i < 12; i++) box(40, 2, 8, -220 + i * 40, 0.5, -200, 0x3f3f46);
+            for (const bx of [-200, -100, 0, 100, 200]) {
                 box(50, 12, 18, bx, 6, -40, 0x334155); solid(bx, -40, 50, 18);
+                box(50, 8, 4, bx, 14, -48, 0x475569); // backrest
             }
-            // pillars
-            for (const px of [-200, 0, 200]) {
+            for (const px of [-220, -70, 70, 220]) {
                 box(16, ROOM_H - 8, 16, px, ROOM_H / 2, -20, 0x475569); solid(px, -20, 16, 16);
             }
-            // next-train board
-            lit(140, 28, 2, 0, 55, -ROOM_D / 2 + 14, 0x22d3ee);
-            lit(ROOM_W - 60, 2, 2, 0, ROOM_H - 8, 0, 0xfbbf24); // strip lights
-            liftBank = true;
+            // ad panels + next train
+            for (let i = 0; i < 4; i++) lit(50, 30, 1.5, -150 + i * 100, 48, -ROOM_D / 2 + 14, [0x22d3ee, 0xf472b6, 0xfbbf24, 0x4ade80][i]);
+            lit(160, 32, 2, 0, 62, -ROOM_D / 2 + 14, 0x22d3ee);
+            lit(ROOM_W - 60, 2, 2, 0, ROOM_H - 8, 0, 0xfbbf24);
+            // vending
+            box(30, 50, 24, 220, 25, 80, 0x1e293b); solid(220, 80, 30, 24);
+            lit(20, 30, 1, 220, 30, 93, 0xf472b6);
+            // tunnel mouth dark
+            box(120, 50, 20, -ROOM_W / 2 + 40, 25, -200, 0x020617);
+            box(120, 50, 20, ROOM_W / 2 - 40, 25, -200, 0x020617);
         } else if (cat === 'underground') {
-            // Black Market speakeasy: neon, bar, shadowy booths, weight crates
-            box(200, 36, 50, 0, 18, -140, 0x3b1f3a); solid(0, -140, 200, 50);
-            lit(180, 8, 2, 0, 50, -140, 0xf472b6);
-            for (const bx of [-180, -60, 60, 180]) {
-                box(50, 40, 40, bx, 20, 40, 0x1a1020); solid(bx, 40, 50, 40);
-                lit(40, 20, 1, bx, 36, 20, 0xa855f7);
-            }
-            for (const [cx, cz] of [[-200, 120], [200, 120], [0, 140]]) {
+            // speakeasy black market
+            box(220, 36, 50, 0, 18, -140, 0x3b1f3a); solid(0, -140, 220, 50);
+            lit(200, 10, 2, 0, 52, -140, 0xf472b6);
+            for (let i = 0; i < 14; i++) lit(6, 18, 6, -130 + i * 20, 58, -162, [0xf472b6, 0xa855f7, 0x22d3ee][i % 3]);
+            for (const bx of [-200, -70, 70, 200]) booth(bx, 40, 0x1a1020);
+            for (const [cx, cz] of [[-200, 130], [200, 130], [0, 150], [-100, 150], [100, 150]]) {
                 box(40, 30, 40, cx, 15, cz, 0x4a3040); solid(cx, cz, 40, 40);
             }
             lit(ROOM_W - 40, 2, 2, 0, ROOM_H - 6, 0, 0xf472b6);
-            liftBank = false;
-        } else if (cat === 'vc') {
-            // VC partner office: glass table, pitch screen, champagne, money plant
-            box(200, 28, 90, 0, 14, -40, 0x0f172a); solid(0, -40, 200, 90);
-            for (let i = -2; i <= 2; i++) box(18, 22, 18, i * 36, 11, -100, 0x1e293b);
-            lit(200, 70, 2, 0, 50, -ROOM_D / 2 + 14, 0xfbbf24);
-            for (let i = 0; i < 6; i++) lit(28, 18, 1, -100 + i * 40, 48, -ROOM_D / 2 + 16, 0x22c55e);
-            box(30, 50, 30, 220, 25, 100, 0x166534); solid(220, 100, 30, 30);
-            lit(12, 20, 12, -220, 30, 80, 0xfde68a);
-            liftBank = true;
-        } else if (cat === 'agents') {
-            // Agent ops: tool racks, sandboxes, message bus strip
-            for (let i = 0; i < 5; i++) {
-                box(40, 70, 30, -200 + i * 90, 35, -140, 0x312e81); solid(-200 + i * 90, -140, 40, 30);
-                lit(30, 20, 1, -200 + i * 90, 50, -124, [0xa78bfa, 0x22d3ee, 0xf472b6][i % 3]);
+            // velvet rope posts
+            for (const px of [-80, 80]) {
+                box(6, 40, 6, px, 20, -60, 0xfbbf24);
+                lit(4, 4, 4, px, 42, -60, 0xf472b6);
             }
-            box(360, 8, 40, 0, 4, 40, 0x1e1b4b); // bus
-            for (let i = 0; i < 12; i++) lit(16, 4, 4, -160 + i * 28, 10, 40, 0xa78bfa);
-            lit(160, 50, 2, 0, 50, -ROOM_D / 2 + 14, 0x6366f1);
-            liftBank = true;
+            screenWall(0, 50, -ROOM_D / 2 + 14, 140, 40, 0xa855f7);
+        } else if (cat === 'vc') {
+            box(210, 28, 95, 0, 14, -40, 0x0f172a); solid(0, -40, 210, 95);
+            lit(180, 2, 70, 0, 29, -40, 0x334155);
+            for (let i = -3; i <= 3; i++) box(18, 22, 18, i * 32, 11, -105, 0x1e293b);
+            for (let i = -2; i <= 2; i++) box(18, 22, 18, i * 36, 11, 30, 0x1e293b);
+            screenWall(0, 50, -ROOM_D / 2 + 14, 220, 70, 0xfbbf24);
+            for (let i = 0; i < 7; i++) lit(28, 16, 1, -105 + i * 36, 48, -ROOM_D / 2 + 16, 0x22c55e);
+            plant(220, 100, 48); plant(-220, 100, 48);
+            lit(12, 20, 12, -220, 30, 40, 0xfde68a);
+            // champagne sideboard + deal wall
+            box(60, 36, 30, 200, 18, -140, 0x1e293b); solid(200, -140, 60, 30);
+            lit(8, 16, 8, 190, 40, -140, 0xfde68a);
+            lit(8, 16, 8, 210, 40, -140, 0xfde68a);
+            box(40, 70, 8, -200, 35, -160, 0x0f172a);
+            lit(30, 50, 1, -200, 40, -155, 0x22c55e);
+        } else if (cat === 'agents') {
+            for (let i = 0; i < 6; i++) {
+                box(42, 74, 32, -210 + i * 80, 37, -140, 0x312e81); solid(-210 + i * 80, -140, 42, 32);
+                lit(32, 22, 1, -210 + i * 80, 52, -123, [0xa78bfa, 0x22d3ee, 0xf472b6][i % 3]);
+            }
+            // message bus
+            box(400, 8, 44, 0, 4, 40, 0x1e1b4b);
+            for (let i = 0; i < 14; i++) lit(18, 4, 4, -180 + i * 28, 10, 40, [0xa78bfa, 0x22d3ee][i % 2]);
+            screenWall(0, 50, -ROOM_D / 2 + 14, 180, 55, 0x6366f1);
+            // sandbox pods
+            for (const sx of [-160, 0, 160]) {
+                box(70, 50, 50, sx, 25, 120, 0x1e1b4b); solid(sx, 120, 70, 50);
+                lit(50, 30, 1, sx, 40, 96, 0xa78bfa);
+            }
+            // operator desks
+            desk(-100, -40); desk(100, -40);
         } else if (cat === 'alignment') {
-            // Forest research cabin: wood beams, chalkboards, safety whiteboards
             box(ROOM_W - 40, 8, 8, 0, ROOM_H - 10, 0, 0x5c4033);
-            box(200, 60, 8, 0, 40, -ROOM_D / 2 + 16, 0x3f4f3a);
-            lit(180, 40, 1, 0, 42, -ROOM_D / 2 + 18, 0x86efac);
-            for (const [tx, tz] of [[-120, -40], [120, -40], [0, 60]]) {
+            box(ROOM_W - 80, 6, 6, 0, ROOM_H - 10, -80, 0x5c4033);
+            box(220, 60, 8, 0, 40, -ROOM_D / 2 + 16, 0x3f4f3a);
+            lit(200, 44, 1, 0, 42, -ROOM_D / 2 + 18, 0x86efac);
+            for (const [tx, tz] of [[-120, -40], [120, -40], [0, 60], [-120, 80], [120, 80]]) {
                 box(70, 28, 40, tx, 14, tz, 0x6b5136); solid(tx, tz, 70, 40);
             }
-            box(40, 50, 40, 200, 25, 100, 0x2f6b3a); solid(200, 100, 40, 40);
+            box(40, 50, 40, 200, 25, 140, 0x2f6b3a); solid(200, 140, 40, 40);
             lit(8, 40, 8, -220, 40, 80, 0xfde68a);
-            liftBank = false;
+            // chalkboards side
+            lit(60, 40, 1, ROOM_W / 2 - 20, 48, -40, 0x1a2e1a);
+            lit(60, 40, 1, ROOM_W / 2 - 20, 48, 40, 0x1a2e1a);
+            plant(-200, 140); plant(0, 150);
         } else if (cat === 'arena') {
-            // LMSYS arena bowl: central ring, stands, jumbotron
-            box(180, 8, 180, 0, 4, -20, 0xf97316); // ring
+            box(180, 8, 180, 0, 4, -20, 0xf97316);
             box(160, 2, 160, 0, 8, -20, 0x1a1a22);
-            for (let r = 0; r < 3; r++) for (let a = 0; a < 8; a++) {
-                const ang = a * Math.PI / 4;
-                box(40, 12 + r * 8, 30, Math.cos(ang) * (100 + r * 40), 6 + r * 10, -20 + Math.sin(ang) * (100 + r * 40), 0x374151);
+            for (let r = 0; r < 3; r++) for (let a = 0; a < 10; a++) {
+                const ang = a * Math.PI / 5;
+                const rad = 100 + r * 38;
+                box(36, 12 + r * 8, 28, Math.cos(ang) * rad, 6 + r * 10, -20 + Math.sin(ang) * rad, 0x374151);
             }
-            lit(200, 60, 2, 0, 55, -ROOM_D / 2 + 14, 0xfbbf24);
-            for (let i = 0; i < 4; i++) lit(40, 30, 1, -90 + i * 60, 50, -ROOM_D / 2 + 16, 0x22d3ee);
-            liftBank = false;
+            lit(220, 60, 2, 0, 55, -ROOM_D / 2 + 14, 0xfbbf24);
+            for (let i = 0; i < 5; i++) lit(36, 28, 1, -100 + i * 50, 50, -ROOM_D / 2 + 16, 0x22d3ee);
+            // score pylons
+            for (const sx of [-1, 1]) {
+                box(20, 70, 20, sx * 200, 35, 120, 0x1f2937); solid(sx * 200, 120, 20, 20);
+                lit(14, 20, 1, sx * 200, 60, 132, 0xf97316);
+            }
         } else if (cat === 'cafe') {
-            box(160, 34, 50, -100, 17, -120, 0x8b5a2b); solid(-100, -120, 160, 50);
-            for (const [sx, sz] of [[80, -80], [140, -80], [80, -20], [140, -20], [80, 40], [140, 40]]) {
+            box(170, 34, 52, -100, 17, -120, 0x8b5a2b); solid(-100, -120, 170, 52);
+            for (let i = 0; i < 8; i++) lit(6, 14, 6, -160 + i * 18, 48, -145, [0xfbbf24, 0xd97706][i % 2]);
+            for (const [sx, sz] of [[80, -80], [140, -80], [80, -20], [140, -20], [80, 40], [140, 40], [80, 100], [140, 100], [-40, 80], [20, 80]]) {
                 box(28, 16, 28, sx, 8, sz, 0x6d5238); solid(sx, sz, 28, 28);
+                box(12, 20, 12, sx, 18, sz + 18, 0x5a4634);
             }
-            lit(60, 40, 2, -100, 48, -145, 0xffe4ac);
-            box(40, 50, 40, 220, 25, 100, 0x2f6b3a); solid(220, 100, 40, 40);
-            for (let i = 0; i < 5; i++) lit(8, 8, 8, -200 + i * 20, 50, 100, 0xfbbf24);
-            liftBank = false;
+            lit(70, 40, 2, -100, 48, -148, 0xffe4ac);
+            plant(220, 100); plant(-220, 100);
+            for (let i = 0; i < 6; i++) lit(8, 8, 8, -200 + i * 18, 50, 100, 0xfbbf24);
+            // pastry case
+            box(80, 40, 30, 200, 20, -120, 0xe2e8f0); solid(200, -120, 80, 30);
+            lit(60, 20, 1, 200, 36, -104, 0xffe4ac);
         } else if (cat === 'gym') {
             for (const gx of [-180, 0, 180]) {
-                box(50, 20, 120, gx, 10, -40, 0x1f2937); solid(gx, -40, 50, 120);
-                for (let i = 0; i < 4; i++) box(40, 8, 8, gx, 18 + i * 12, -80 + i * 30, 0x6b7280);
+                box(50, 20, 130, gx, 10, -40, 0x1f2937); solid(gx, -40, 50, 130);
+                for (let i = 0; i < 5; i++) box(40, 8, 8, gx, 18 + i * 12, -90 + i * 28, 0x6b7280);
             }
-            box(100, 4, 100, 0, 2, 100, 0x0ea5e9); // mat
-            lit(80, 30, 2, 0, 50, -ROOM_D / 2 + 14, 0x38bdf8);
-            liftBank = false;
+            box(120, 4, 120, 0, 2, 110, 0x0ea5e9);
+            lit(90, 30, 2, 0, 50, -ROOM_D / 2 + 14, 0x38bdf8);
+            // mirrors
+            lit(2, 50, 100, ROOM_W / 2 - 16, 40, -40, 0xbae6fd);
+            // bike row
+            for (let i = 0; i < 4; i++) {
+                box(30, 30, 60, -150 + i * 50, 15, 80, 0x374151); solid(-150 + i * 50, 80, 30, 60);
+            }
         } else if (cat === 'nursery') {
-            for (const cx of [-160, -40, 80, 200]) {
+            for (const cx of [-180, -60, 60, 180]) {
                 box(50, 30, 40, cx, 15, -100, 0xf9a8d4); solid(cx, -100, 50, 40);
-                box(40, 20, 30, cx, 12, -40, 0xfbcfe8); // crib
+                box(40, 20, 30, cx, 12, -40, 0xfbcfe8);
+                lit(20, 10, 1, cx, 28, -55, 0xfda4af);
             }
-            lit(100, 40, 2, 0, 50, -ROOM_D / 2 + 14, 0xf472b6);
+            lit(120, 40, 2, 0, 50, -ROOM_D / 2 + 14, 0xf472b6);
             box(60, 40, 40, 0, 20, 80, 0xfde68a); solid(0, 80, 60, 40);
-            liftBank = false;
+            // toys / mats
+            for (let i = 0; i < 5; i++) lit(20, 4, 20, -80 + i * 40, 2, 130, [0xf472b6, 0x38bdf8, 0x4ade80, 0xfbbf24, 0xa78bfa][i]);
+            plant(-230, 140, 30); plant(230, 140, 30);
         } else if (cat === 'conference') {
-            box(280, 30, 120, 0, 15, -40, 0x4338ca); solid(0, -40, 280, 120);
-            for (let i = -4; i <= 4; i++) box(20, 22, 20, i * 30, 11, -120, 0x6366f1);
-            lit(240, 80, 2, 0, 50, -ROOM_D / 2 + 14, 0xa5b4fc);
+            box(300, 30, 130, 0, 15, -40, 0x4338ca); solid(0, -40, 300, 130);
+            for (let i = -5; i <= 5; i++) box(20, 22, 20, i * 28, 11, -125, 0x6366f1);
+            for (let i = -4; i <= 4; i++) box(20, 22, 20, i * 30, 11, 40, 0x6366f1);
+            lit(260, 80, 2, 0, 50, -ROOM_D / 2 + 14, 0xa5b4fc);
             for (let r = 0; r < 3; r++) for (let c = 0; c < 8; c++) {
-                box(24, 16, 24, -140 + c * 40, 8, 40 + r * 40, 0x4f46e5);
+                box(24, 16, 24, -140 + c * 40, 8, 70 + r * 36, 0x4f46e5);
             }
-            liftBank = true;
+            // AV booth
+            box(50, 40, 40, 220, 20, -140, 0x312e81); solid(220, -140, 50, 40);
+            lit(30, 16, 1, 220, 36, -118, 0x818cf8);
+            plant(-230, 140);
         } else if (cat === 'backbone') {
-            // IXP / backbone: fiber racks, blinkenlights, globe screen
-            for (let i = 0; i < 8; i++) {
-                box(30, 80, 40, -210 + i * 55, 40, -120, 0x0e7490); solid(-210 + i * 55, -120, 30, 40);
-                for (let l = 0; l < 6; l++) lit(4, 4, 1, -210 + i * 55, 20 + l * 12, -98, [0x22d3ee, 0x4ade80, 0xfbbf24][l % 3]);
+            for (let i = 0; i < 9; i++) {
+                box(30, 80, 40, -220 + i * 52, 40, -120, 0x0e7490); solid(-220 + i * 52, -120, 30, 40);
+                for (let l = 0; l < 7; l++) lit(4, 4, 1, -220 + i * 52, 16 + l * 11, -98, [0x22d3ee, 0x4ade80, 0xfbbf24][l % 3]);
             }
-            lit(160, 70, 2, 0, 50, -ROOM_D / 2 + 14, 0x06b6d4);
-            box(80, 50, 80, 0, 25, 80, 0x164e63); solid(0, 80, 80, 80);
-            liftBank = true;
+            lit(180, 70, 2, 0, 50, -ROOM_D / 2 + 14, 0x06b6d4);
+            box(90, 55, 90, 0, 28, 90, 0x164e63); solid(0, 90, 90, 90);
+            lit(50, 30, 1, 0, 50, 136, 0x22d3ee);
+            // fiber spools
+            for (const fx of [-180, 180]) {
+                box(40, 30, 40, fx, 15, 120, 0x0e7490); solid(fx, 120, 40, 40);
+                lit(20, 6, 1, fx, 32, 140, 0x22d3ee);
+            }
         } else if (cat === 'warehouse') {
-            // shelving racks + pallets
             for (const sx of [-200, 0, 200]) {
-                box(50, 88, 220, sx, 44, -30, 0x5a6068); solid(sx, -30, 50, 220);
-                for (let sh = 0; sh < 4; sh++) box(46, 4, 210, sx, 20 + sh * 22, -30, 0x7a828c);
-                for (let sh = 0; sh < 4; sh++) for (let cr = 0; cr < 3; cr++)
-                    box(40, 16, 40, sx, 30 + sh * 22, -110 + cr * 70, [0x8a6a3a, 0x6a7a8a, 0x7a5a4a][cr % 3]);
+                box(50, 88, 240, sx, 44, -20, 0x5a6068); solid(sx, -20, 50, 240);
+                for (let sh = 0; sh < 4; sh++) box(46, 4, 230, sx, 20 + sh * 22, -20, 0x7a828c);
+                for (let sh = 0; sh < 4; sh++) for (let cr = 0; cr < 4; cr++)
+                    box(40, 16, 40, sx, 30 + sh * 22, -120 + cr * 60, [0x8a6a3a, 0x6a7a8a, 0x7a5a4a, 0x5a6a4a][cr % 4]);
             }
-            liftBank = false;
+            // forklift silhouette
+            box(50, 40, 70, 0, 20, 140, 0xfbbf24); solid(0, 140, 50, 70);
+            box(20, 50, 20, 0, 45, 160, 0xf59e0b);
         } else {
-            // office lobby: reception, lounge, coffee bar, art, turnstiles, planters
-            box(150, 34, 46, -110, 17, -120, 0x8b6f4e);
-            box(158, 5, 52, -110, 36, -120, 0xa9885f);
-            lit(40, 18, 1, -110, 42, -145, 0x1a2a3a); // desk monitors
-            solid(-110, -120, 158, 52);
-            for (const [sx, sz] of [[130, -90], [190, -90], [130, -30], [190, -30], [130, 40], [190, 40]]) {
-                box(38, 10, 38, sx, 16, sz, 0x3f4a5c);
+            // office lobby: reception, lounge, coffee, art, turnstiles, planters
+            box(160, 34, 48, -110, 17, -120, 0x8b6f4e);
+            box(168, 5, 54, -110, 36, -120, 0xa9885f);
+            lit(44, 18, 1, -110, 42, -145, 0x1a2a3a);
+            solid(-110, -120, 168, 54);
+            for (const [sx, sz] of [[130, -90], [190, -90], [130, -30], [190, -30], [130, 40], [190, 40], [130, 100], [190, 100]]) {
+                box(38, 12, 38, sx, 16, sz, 0x3f4a5c);
                 box(38, 26, 10, sx, 29, sz - 14, 0x36404f);
                 solid(sx, sz, 38, 38);
             }
-            // coffee / espresso bar
-            box(90, 36, 40, -200, 18, 40, 0x5c4033); solid(-200, 40, 90, 40);
-            lit(20, 8, 20, -200, 42, 40, 0xffe4ac);
-            // wall art panels
-            for (let i = 0; i < 3; i++) lit(36, 28, 1.5, -80 + i * 50, 55, -ROOM_D / 2 + 14, [0x4aa0ff, 0xe879f9, 0x22d3cc][i]);
-            // rug + coffee table
-            box(160, 1.5, 100, 40, 1, 80, 0x4a5568);
-            box(60, 14, 40, 40, 8, 80, 0x6d5238);
+            box(100, 36, 42, -200, 18, 40, 0x5c4033); solid(-200, 40, 100, 42);
+            lit(22, 8, 22, -200, 42, 40, 0xffe4ac);
+            for (let i = 0; i < 4; i++) lit(36, 28, 1.5, -100 + i * 50, 55, -ROOM_D / 2 + 14, [0x4aa0ff, 0xe879f9, 0x22d3cc, 0xfbbf24][i]);
+            box(180, 1.5, 110, 40, 1, 70, 0x4a5568);
+            box(70, 14, 44, 40, 8, 70, 0x6d5238);
             for (const px of [-240, 240]) {
                 box(34, 26, 34, px, 13, 150, 0x6b7280);
                 box(30, 46, 30, px, 48, 150, 0x2f6b3a);
@@ -588,77 +788,178 @@ export const Interior = {
                 box(16, 34, 60, gx, 17, -30, 0x767f8c);
                 solid(gx, -30, 16, 60);
             }
-            // directory totem
             box(18, 70, 18, 230, 35, -40, 0x2a3340); solid(230, -40, 18, 18);
             lit(14, 40, 1, 230, 40, -30, 0x38bdf8);
+            // waiting chairs row
+            for (let i = 0; i < 5; i++) box(28, 18, 28, -180 + i * 36, 9, 140, 0x475569);
         }
 
-        // lift bank on the left wall (skipped for factory/bar/press/warehouse)
-        if (liftBank) {
+        // ── monumental lift bank (left wall) — always when multi-floor ───────
+        // Only when maxFloor>0 so F / E / 0–9 controls and prompts stay honest.
+        if (this.maxFloor > 0) {
             const lwx = -ROOM_W / 2 + WALL / 2;
+            // full-height brushed steel alcove behind all three cars
+            box(14, ROOM_H - 6, 280, lwx + 8, ROOM_H / 2, -40, 0x6b7280);
+            box(4, ROOM_H - 10, 270, lwx + 14, ROOM_H / 2, -40, 0x374151);
+            // glowing LIFTS header plaque
+            lit(10, 18, 90, lwx + 16, 88, -40, accent.getHex());
+            lit(6, 10, 70, lwx + 18, 88, -40, 0x0ea5e9);
+            // wayfinding floor stripe to the bank
+            lit(80, 1.2, 8, lwx + 55, 1.1, -40, accent.getHex());
+            lit(8, 1.2, 220, lwx + 55, 1.1, -40, 0x0ea5e9);
+            // mat in front of bank
+            box(70, 1.5, 240, lwx + 48, 0.8, -40, 0x1f2937);
+
             for (const lz of [-120, -40, 40]) {
-                // brushed metal door frame + dark door + lit call lantern
-                box(6, 80, 60, lwx + 3, 40, lz, 0x8a939e);
-                box(2, 72, 52, lwx + 6, 40, lz, 0x1f2937);
-                lit(4, 5, 24, lwx + 7, 84, lz, accent.getHex());
-                // floor indicator strip above door
-                lit(20, 6, 2, lwx + 10, 88, lz, 0x0ea5e9);
+                // outer frame (chrome)
+                box(10, 86, 64, lwx + 10, 43, lz, 0x9ca3af);
+                // inner dark doors with center seam
+                box(3, 78, 28, lwx + 15, 42, lz - 14, 0x111827);
+                box(3, 78, 28, lwx + 15, 42, lz + 14, 0x111827);
+                lit(2, 70, 2, lwx + 16, 42, lz, 0x38bdf8); // door seam glow
+                // call lantern (hall lantern) above
+                lit(8, 6, 28, lwx + 18, 90, lz, accent.getHex());
+                // digital floor display
+                lit(22, 10, 3, lwx + 20, 82, lz, 0x0ea5e9);
                 // call button plate
-                box(4, 14, 10, lwx + 12, 48, lz + 28, 0x374151);
-                lit(2, 3, 3, lwx + 13, 50, lz + 28, 0x4ade80);
-                this._liftZones.push({ x: lwx + 30, z: lz, r: 70 });
+                box(5, 18, 12, lwx + 20, 48, lz + 30, 0x1f2937);
+                lit(3, 4, 4, lwx + 22, 52, lz + 30, 0x4ade80);
+                lit(3, 4, 4, lwx + 22, 44, lz + 30, 0xfbbf24);
+                // car interior glow bleed under doors
+                lit(4, 4, 40, lwx + 18, 4, lz, 0xfef3c7);
+                this._liftZones.push({ x: lwx + 36, z: lz, r: 78 });
             }
-            // wall directory of floors next to bank
-            box(8, 90, 50, lwx + 18, 50, 120, 0x111827);
-            lit(2, 70, 36, lwx + 22, 50, 120, 0x38bdf8);
+            // floor directory panel next to bank
+            box(10, 100, 56, lwx + 22, 50, 120, 0x0f172a);
+            lit(3, 84, 44, lwx + 26, 50, 120, 0x38bdf8);
+            for (let i = 0; i <= Math.min(this.maxFloor, 9); i++) {
+                lit(2, 5, 30, lwx + 28, 20 + i * 8, 120, i === this.floor ? 0x4ade80 : 0x1e3a5f);
+            }
+            // chrome handrail along approach
+            box(4, 4, 200, lwx + 70, 36, -40, 0x9ca3af);
         }
-        // door frame + a slab of daylight in the opening (else it's a black hole)
+        // door frame + daylight slab in the opening
         box(DOOR_W + 16, 6, 6, 0, 62, ROOM_D / 2 - WALL / 2, accent.getHex());
+        box(6, 62, 6, -DOOR_W / 2 - 4, 31, ROOM_D / 2 - WALL / 2, accent.getHex());
+        box(6, 62, 6, DOOR_W / 2 + 4, 31, ROOM_D / 2 - WALL / 2, accent.getHex());
         lit(DOOR_W + 2, 60, 2, 0, 30, ROOM_D / 2 + WALL / 2 + 1, 0xcfe0f2);
     },
 
     // ── enter / exit ─────────────────────────────────────────────────────────
 
-    /** Extra prop density — desks, plants, rugs, screens for every themed room. */
-    _enrichRoom(box, lit, th, accent) {
+    /** Extra prop density — theme-aware dressing layer for every room. */
+    _enrichRoom(box, lit, th, accent, floor = 0) {
         if (!this._propColliders) this._propColliders = [];
         const solid = (x, z, w, d) => this._propColliders.push(
             { x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
         const acc = (accent && accent.getHex) ? accent.getHex() : 0x4a6fa5;
-        // corner columns
+        const cat = th?.cat || 'office';
+        const industrial = ['robotics', 'datacenter', 'platform', 'warehouse', 'arena', 'gym', 'power', 'backbone'].includes(cat);
+        const nightlife = ['bar', 'underground'].includes(cat);
+
+        // corner structural columns
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-            box(10, ROOM_H - 8, 10, sx * (ROOM_W / 2 - 24), ROOM_H / 2, sz * (ROOM_D / 2 - 24), th.wall);
+            box(12, ROOM_H - 8, 12, sx * (ROOM_W / 2 - 26), ROOM_H / 2, sz * (ROOM_D / 2 - 26), th.wall);
+            lit(4, 8, 4, sx * (ROOM_W / 2 - 26), 70, sz * (ROOM_D / 2 - 26), th.lamp);
         }
-        // centre rug
-        box(200, 1.2, 140, 40, 0.8, 20, 0x3b4558);
-        // plants
-        for (const px of [-260, 260]) {
-            box(22, 18, 22, px, 9, 160, 0x4b5563); solid(px, 160, 22, 22);
-            box(18, 36, 18, px, 36, 160, 0x166534);
+
+        // centre area rug (skip tracks / industrial)
+        if (!['platform', 'warehouse', 'arena', 'gym', 'datacenter'].includes(cat)) {
+            const rug = nightlife ? 0x4a1942 : industrial ? 0x374151 : 0x3b4558;
+            box(220, 1.2, 150, 30, 0.7, 10, rug);
+            box(200, 1.3, 8, 30, 0.9, -60, acc); // accent edge
         }
-        // wall sconces
-        for (const sx of [-1, 1]) lit(8, 6, 4, sx * 200, 55, -ROOM_D / 2 + 18, th.lamp);
-        // pendant lights
-        for (const px of [-100, 100]) {
-            box(2, 16, 2, px, ROOM_H - 18, 0, 0x64748b);
-            lit(18, 4, 18, px, ROOM_H - 10, 0, th.lamp);
+
+        // planter pair near entrance (not platform)
+        if (cat !== 'platform' && cat !== 'jail') {
+            for (const px of [-250, 250]) {
+                box(24, 16, 24, px, 8, 170, 0x4b5563); solid(px, 170, 24, 24);
+                box(18, 34, 18, px, 34, 170, 0x166534);
+                box(26, 16, 26, px, 48, 170, 0x15803d);
+            }
         }
-        // side console (skip heavy industrial themes)
-        if (!['robotics', 'datacenter', 'platform', 'warehouse', 'arena', 'gym'].includes(th.cat)) {
-            box(100, 28, 36, 200, 14, 20, 0x5c4033); solid(200, 20, 100, 36);
-            lit(40, 18, 1, 200, 32, 2, 0x1e293b);
-            box(16, 32, 16, 230, 16, 60, 0x374151);
+
+        // wall sconces — denser on dim themes
+        const sconceY = 52;
+        for (const sx of [-1, 1]) {
+            lit(8, 6, 5, sx * 180, sconceY, -ROOM_D / 2 + 18, th.lamp);
+            lit(8, 6, 5, sx * 80, sconceY, -ROOM_D / 2 + 18, th.lamp);
+            lit(5, 8, 6, sx * (ROOM_W / 2 - 18), sconceY, -80, th.lamp);
+            lit(5, 8, 6, sx * (ROOM_W / 2 - 18), sconceY, 60, th.lamp);
         }
-        // art frames on side wall
-        for (let i = 0; i < 3; i++) {
-            lit(28, 36, 1.5, ROOM_W / 2 - WALL / 2 - 4, 48, -80 + i * 70, acc);
-            box(32, 40, 2, ROOM_W / 2 - WALL / 2 - 5, 48, -80 + i * 70, 0x1e293b);
+
+        // pendant cluster
+        for (const px of [-120, 0, 120]) {
+            box(2, 14, 2, px, ROOM_H - 16, -20, 0x64748b);
+            lit(16, 4, 16, px, ROOM_H - 10, -20, th.lamp);
         }
+
+        // side console / info desk — skip heavy industrial
+        if (!industrial) {
+            box(110, 28, 38, 200, 14, 10, nightlife ? 0x3b1f3a : 0x5c4033); solid(200, 10, 110, 38);
+            lit(48, 18, 1, 200, 32, -8, 0x1e293b);
+            box(16, 34, 16, 235, 17, 50, 0x374151);
+            lit(10, 6, 10, 235, 36, 50, th.lamp);
+        }
+
+        // art / poster frames on right wall
+        for (let i = 0; i < 4; i++) {
+            box(34, 42, 2.5, ROOM_W / 2 - WALL / 2 - 5, 48, -100 + i * 60, 0x1e293b);
+            lit(28, 36, 1.5, ROOM_W / 2 - WALL / 2 - 4, 48, -100 + i * 60, [acc, th.lamp, 0x22d3ee, 0xf472b6][i % 4]);
+        }
+
         // bin + water cooler near door
-        box(12, 16, 12, 80, 8, ROOM_D / 2 - 50, 0x475569);
-        box(14, 40, 14, -80, 20, ROOM_D / 2 - 55, 0xcbd5e1); solid(-80, ROOM_D / 2 - 55, 14, 14);
-        lit(10, 8, 10, -80, 42, ROOM_D / 2 - 55, 0x7dd3fc);
+        box(14, 18, 14, 90, 9, ROOM_D / 2 - 52, 0x475569);
+        box(16, 42, 16, -90, 21, ROOM_D / 2 - 55, 0xcbd5e1); solid(-90, ROOM_D / 2 - 55, 16, 16);
+        lit(12, 8, 12, -90, 44, ROOM_D / 2 - 55, 0x7dd3fc);
+
+        // baseboard glow ticks (theme pulse line)
+        for (let i = -3; i <= 3; i++) {
+            lit(16, 2, 2, i * 70, 4, -ROOM_D / 2 + 16, acc);
+        }
+
+        // theme-specific extras
+        if (cat === 'office' || cat === 'openplan') {
+            // magazine table + brochure rack
+            box(50, 16, 40, -40, 8, 100, 0x6d5238); solid(-40, 100, 50, 40);
+            box(20, 50, 12, 60, 25, 150, 0x334155); solid(60, 150, 20, 12);
+            lit(16, 36, 1, 60, 30, 157, 0x38bdf8);
+        } else if (cat === 'bar' || cat === 'underground') {
+            for (let i = 0; i < 6; i++) lit(10, 2, 10, -100 + i * 40, 2, -20, [0xe879f9, 0x5affc8, 0x8a5aff][i % 3]);
+        } else if (cat === 'datacenter' || cat === 'backbone') {
+            // floor tile LEDs
+            for (let i = 0; i < 8; i++) lit(8, 1, 8, -140 + i * 40, 1.2, 150, 0x22d3ee);
+        } else if (cat === 'metro' || cat === 'platform') {
+            // safety posts
+            for (const px of [-160, -80, 80, 160]) {
+                box(6, 36, 6, px, 18, 120, 0xfbbf24);
+            }
+        } else if (cat === 'vc' || cat === 'boardroom') {
+            box(40, 50, 20, -210, 25, -20, 0x1e293b); solid(-210, -20, 40, 20);
+            lit(20, 30, 1, -210, 35, -8, 0xfbbf24);
+        } else if (cat === 'agents') {
+            for (let i = 0; i < 5; i++) lit(12, 3, 12, -80 + i * 40, 2, -80, 0xa78bfa);
+        } else if (cat === 'home' || cat === 'cafe') {
+            // extra cushions / side tables already dense; add lamp pair
+            lit(8, 30, 8, 240, 30, -80, 0xffe4ac);
+            lit(8, 30, 8, -240, 30, -80, 0xffe4ac);
+        } else if (cat === 'court' || cat === 'embassy' || cat === 'conference') {
+            // ceremonial plants already; add rope posts
+            for (const px of [-60, 60]) {
+                box(5, 36, 5, px, 18, -80, 0xfbbf24);
+            }
+        }
+
+        // floor number glow ticks near lift when multi-floor
+        if (this.maxFloor > 0) {
+            const lwx = -ROOM_W / 2 + WALL / 2;
+            lit(30, 8, 2, lwx + 40, 70, 120, 0x0ea5e9);
+        }
+
+        // silence unused floor param lint
+        void floor;
     },
+
     canEnter(b) {
         if (!b) return false;
         // Outdoor-only props stay blocked; launchpads use mission/space interiors (2D parity).
@@ -704,14 +1005,14 @@ export const Interior = {
             return;
         }
         this.group.visible = true;
-        if (this._fillLight) { this._fillLight.visible = true; this._fillLight.intensity = 0.85; }
+        if (this._fillLight) { this._fillLight.visible = true; }
+        if (this._rimLight) { this._rimLight.visible = true; }
 
         // hide the city so an interior costs almost nothing to draw
         this._cityHidden = [];
         for (const o of G.scene.children) {
             if (o === this.group || !o.visible) continue;
             if (o.isLight) continue;
-            // keep cabin / weather dome? city meshes only
             o.visible = false;
             this._cityHidden.push(o);
         }
@@ -735,6 +1036,7 @@ export const Interior = {
         if (!this.building) return;
         this.group.visible = false;
         if (this._fillLight) this._fillLight.visible = false;
+        if (this._rimLight) this._rimLight.visible = false;
         for (const o of this._cityHidden) o.visible = true;
         this._cityHidden = [];
         G.colliders = this._savedColliders;
@@ -764,7 +1066,7 @@ export const Interior = {
             theme: this.building ? this._theme(this.building).cat : null,
             atLift: this.atLift(),
             elevators: this.maxFloor > 0,
-            specialCats: ['jail','court','embassy','mission','power','boardroom','metro','platform','underground','vc','agents','alignment','arena','cafe','gym','nursery','conference','backbone']
+            specialCats: ['jail', 'court', 'embassy', 'mission', 'power', 'boardroom', 'openplan', 'metro', 'platform', 'underground', 'vc', 'agents', 'alignment', 'arena', 'cafe', 'gym', 'nursery', 'conference', 'backbone']
         };
     }
 };

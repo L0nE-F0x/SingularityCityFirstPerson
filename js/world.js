@@ -205,10 +205,12 @@ export const World = {
             g.translate(r.x, 0.4, r.z);
             roadGeos.push(g);
         }
-        const roadMesh = new THREE.Mesh(mergeGeometries(roadGeos, false),
-            new THREE.MeshLambertMaterial({ map: roadTex }));
-        roadMesh.matrixAutoUpdate = false;
-        scene.add(roadMesh);
+        if (roadGeos.length) {
+            const roadMesh = new THREE.Mesh(mergeGeometries(roadGeos, false),
+                new THREE.MeshLambertMaterial({ map: roadTex }));
+            roadMesh.matrixAutoUpdate = false;
+            scene.add(roadMesh);
+        }
 
         this._buildSidewalks(scene);
         this._buildRoadMarkings(scene);
@@ -335,9 +337,9 @@ export const World = {
     // ── BUILDINGS ────────────────────────────────────────────────────────────
     _buildBuildings(scene) {
         const tiers = [
-            { maxFl: 2, rows: 2, facades: TEX.facade(2, { litRatio: 0.5 }) },
-            { maxFl: 5, rows: 4, facades: TEX.facade(4, { litRatio: 0.55 }) },
-            { maxFl: 99, rows: 8, facades: TEX.facade(8, { litRatio: 0.6 }) }
+            { maxFl: 2, rows: 2, facades: TEX.facade(2, { litRatio: 0.48, cols: 6 }) },
+            { maxFl: 5, rows: 4, facades: TEX.facade(4, { litRatio: 0.55, cols: 7 }) },
+            { maxFl: 99, rows: 8, facades: TEX.facade(8, { litRatio: 0.62, cols: 8 }) }
         ];
         const buckets = [[], [], []];
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish']);
@@ -351,22 +353,40 @@ export const World = {
             if (OPEN.has(b.type)) { this._buildSpecialty(p); continue; }
             const fl = b.fl || 3;
             const ti = fl <= 2 ? 0 : fl <= 5 ? 1 : 2;
-            // multi-tier setbacks on taller towers (skyline silhouette)
+            // multi-tier setbacks — refined step ratios so silhouettes taper cleanly
+            // (no zero-height slices, upper mass always inset enough to read)
             if (fl >= 5 && p.h > FLOOR_H * 4) {
                 if (fl >= 10) {
-                    const h0 = p.h * 0.48, h1 = p.h * 0.28, h2 = p.h - h0 - h1;
-                    buckets[ti].push({ ...p, h: h0, _isBase: true });
-                    setbacks.push({ ...p, h: h1, w: p.w * 0.78, d: p.d * 0.78, y0: h0, _isSetback: true });
-                    setbacks.push({ ...p, h: h2, w: p.w * 0.52, d: p.d * 0.52, y0: h0 + h1, _isSetback: true, _crown: true });
-                } else {
-                    const baseH = p.h * (fl >= 8 ? 0.58 : 0.70);
+                    // Exact partition of p.h so stacked masses never overshoot / gap.
+                    // _hasStackAbove: skip parapet/plant on intermediate tops (avoids
+                    // cap geometry buried inside the next setback mass).
+                    const h0 = p.h * 0.44;
+                    const h1 = p.h * 0.30;
+                    const h2 = p.h - h0 - h1;
+                    buckets[ti].push({ ...p, h: h0, _isBase: true, _hasStackAbove: true });
+                    setbacks.push({ ...p, h: h1, w: p.w * 0.74, d: p.d * 0.74, y0: h0, _isSetback: true, _hasStackAbove: true });
+                    setbacks.push({ ...p, h: h2, w: p.w * 0.48, d: p.d * 0.48, y0: h0 + h1, _isSetback: true, _crown: true });
+                } else if (fl >= 8) {
+                    const baseH = p.h * 0.56;
                     const topH = p.h - baseH;
-                    buckets[ti].push({ ...p, h: baseH, _isBase: true });
+                    buckets[ti].push({ ...p, h: baseH, _isBase: true, _hasStackAbove: true });
                     setbacks.push({
                         ...p,
                         h: topH,
-                        w: p.w * (fl >= 8 ? 0.58 : 0.70),
-                        d: p.d * (fl >= 8 ? 0.58 : 0.70),
+                        w: p.w * 0.62,
+                        d: p.d * 0.62,
+                        y0: baseH,
+                        _isSetback: true
+                    });
+                } else {
+                    const baseH = p.h * 0.68;
+                    const topH = p.h - baseH;
+                    buckets[ti].push({ ...p, h: baseH, _isBase: true, _hasStackAbove: true });
+                    setbacks.push({
+                        ...p,
+                        h: topH,
+                        w: p.w * 0.72,
+                        d: p.d * 0.72,
                         y0: baseH,
                         _isSetback: true
                     });
@@ -382,12 +402,22 @@ export const World = {
             const t = tiers[ti];
             const geo = new THREE.BoxGeometry(1, 1, 1);
             geo.translate(0, 0.5, 0);
-            const side = new THREE.MeshPhongMaterial({
-                map: t.facades.map, emissiveMap: t.facades.emissiveMap,
-                emissive: new THREE.Color(0xffd9a0), emissiveIntensity: 0,
-                shininess: 28, specular: 0x3a4558
+            // Standard: glass-ish facade response without env maps / transmission
+            const side = new THREE.MeshStandardMaterial({
+                map: t.facades.map,
+                emissiveMap: t.facades.emissiveMap,
+                emissive: new THREE.Color(0xffe0a8),
+                emissiveIntensity: 0,
+                metalness: 0.22,
+                roughness: 0.38,
+                envMapIntensity: 0
             });
-            const roof = new THREE.MeshPhongMaterial({ color: 0x2e3440, shininess: 12, specular: 0x1a1e24 });
+            const roof = new THREE.MeshStandardMaterial({
+                color: 0x2a303a,
+                metalness: 0.35,
+                roughness: 0.62,
+                envMapIntensity: 0
+            });
             this.windowMats.push(side);
             const mats = [side, side, roof, roof, side, side];
             const im = new THREE.InstancedMesh(geo, mats, list.length);
@@ -412,10 +442,44 @@ export const World = {
 
         // mid-belt ledge strip for taller masses — depth without per-building meshes
         this._buildLedges(scene, [...buckets[1], ...buckets[2], ...setbacks]);
-        this._buildRoofs(scene, [
-            ...buckets.flat().map(p => ({ ...p, h: (p.y0 || 0) + p.h })),
-            ...setbacks.map(p => ({ ...p, h: (p.y0 || 0) + p.h }))
+        // Parapet/plant only on terminal tops (not intermediate setback floors)
+        const roofList = [
+            ...buckets.flat().filter(p => !p._hasStackAbove).map(p => ({ ...p, h: (p.y0 || 0) + p.h })),
+            ...setbacks.filter(p => !p._hasStackAbove).map(p => ({ ...p, h: (p.y0 || 0) + p.h }))
+        ];
+        this._buildRoofs(scene, roofList);
+        // Thin setback "floor plate" rings on intermediate steps (reads as a real step)
+        this._buildSetbackPlates(scene, [
+            ...buckets.flat().filter(p => p._hasStackAbove),
+            ...setbacks.filter(p => p._hasStackAbove)
         ]);
+    },
+
+    /** Slim floor-plate rings at intermediate setback tops — not full parapets. */
+    _buildSetbackPlates(scene, list) {
+        if (!list.length) return;
+        const spots = list.map(p => ({
+            x: p.x,
+            y: (p.y0 || 0) + p.h,
+            z: p.z,
+            w: p.w + 5,
+            d: p.d + 5
+        }));
+        const geo = new THREE.BoxGeometry(1, 1, 1);
+        geo.translate(0, 0.5, 0);
+        const im = new THREE.InstancedMesh(geo,
+            new THREE.MeshStandardMaterial({
+                color: 0x9aa4b2, metalness: 0.3, roughness: 0.45, envMapIntensity: 0
+            }), spots.length);
+        const d = new THREE.Object3D();
+        spots.forEach((s, i) => {
+            d.position.set(s.x, s.y, s.z);
+            d.scale.set(s.w, 2.2, s.d); // thin plate, overhangs the mass below
+            d.updateMatrix();
+            im.setMatrixAt(i, d.matrix);
+        });
+        im.instanceMatrix.needsUpdate = true;
+        scene.add(im);
     },
 
     /** Horizontal belt ledges so facades read as stacked floors, not flat slabs. */
@@ -423,26 +487,30 @@ export const World = {
         if (!list.length) return;
         const spots = [];
         for (const p of list) {
-            const h = (p.y0 || 0) + p.h;
+            const base = p.y0 || 0;
+            const h = base + p.h;
             if (h < FLOOR_H * 3) continue;
-            // belt ledges — denser on tall masses so towers read as stacked floors
-            const y = (p.y0 || 0) + p.h * 0.55;
-            spots.push({ x: p.x, y, z: p.z, w: p.w + 5, d: p.d + 5 });
+            // belt ledges — denser on tall masses; thin so they don't read as shelves
+            // keep them strictly inside the mass height to avoid clipping into parapets
+            const yMid = base + p.h * 0.52;
+            spots.push({ x: p.x, y: yMid, z: p.z, w: p.w + 4.5, d: p.d + 4.5, th: 2.4 });
             if (h > FLOOR_H * 5) {
-                spots.push({ x: p.x, y: (p.y0 || 0) + p.h * 0.28, z: p.z, w: p.w + 4, d: p.d + 4 });
+                spots.push({ x: p.x, y: base + p.h * 0.26, z: p.z, w: p.w + 3.5, d: p.d + 3.5, th: 2.1 });
             }
             if (h > FLOOR_H * 9) {
-                spots.push({ x: p.x, y: (p.y0 || 0) + p.h * 0.78, z: p.z, w: p.w + 3, d: p.d + 3 });
+                spots.push({ x: p.x, y: base + p.h * 0.76, z: p.z, w: p.w + 2.8, d: p.d + 2.8, th: 1.9 });
             }
         }
         if (!spots.length) return;
         const geo = new THREE.BoxGeometry(1, 1, 1);
         const im = new THREE.InstancedMesh(geo,
-            new THREE.MeshPhongMaterial({ color: 0x7a8494, shininess: 20, specular: 0x2a3038 }), spots.length);
+            new THREE.MeshStandardMaterial({
+                color: 0x8a94a4, metalness: 0.28, roughness: 0.48, envMapIntensity: 0
+            }), spots.length);
         const d = new THREE.Object3D();
         spots.forEach((s, i) => {
             d.position.set(s.x, s.y, s.z);
-            d.scale.set(s.w, 3.8, s.d);
+            d.scale.set(s.w, s.th, s.d);
             d.updateMatrix();
             im.setMatrixAt(i, d.matrix);
         });
@@ -483,20 +551,25 @@ export const World = {
 
     /* Parapets and rooftop plant. Every building was a bare box cut off flat
        at the top, which is most of why the skyline read as untextured blocks.
-       Both are instanced with per-building transforms — 2 draw calls for the
+       Both are instanced with per-building transforms — few draw calls for the
        whole city, and they scale exactly (a parapet baked into the shared unit
        box would stretch to 20 units on a 200-wide building). */
     _buildRoofs(scene, list) {
         if (!list.length) return;
         const d = new THREE.Object3D();
+        const CAP_H = 4.2; // slim parapet cap — was 8 (chunky lid look)
 
+        // Parapet cap: slight overhang, thin height so it reads as coping stone
         const capGeo = new THREE.BoxGeometry(1, 1, 1);
         capGeo.translate(0, 0.5, 0);
         const caps = new THREE.InstancedMesh(capGeo,
-            new THREE.MeshPhongMaterial({ color: 0x9aa3b0, shininess: 22, specular: 0x333840 }), list.length);
+            new THREE.MeshStandardMaterial({
+                color: 0xa8b0bc, metalness: 0.22, roughness: 0.52, envMapIntensity: 0
+            }), list.length);
         list.forEach((p, i) => {
             d.position.set(p.x, p.h, p.z);
-            d.scale.set(p.w + 6, 8, p.d + 6);
+            // modest overhang (not +6 which floated past setback edges)
+            d.scale.set(p.w + 4, CAP_H, p.d + 4);
             d.updateMatrix();
             caps.setMatrixAt(i, d.matrix);
         });
@@ -509,28 +582,51 @@ export const World = {
             const spireGeo = new THREE.BoxGeometry(1, 1, 1);
             spireGeo.translate(0, 0.5, 0);
             const spires = new THREE.InstancedMesh(spireGeo,
-                new THREE.MeshPhongMaterial({ color: 0xc0c8d4, shininess: 40, specular: 0x556070 }), crownList.length);
+                new THREE.MeshStandardMaterial({
+                    color: 0xc8d0dc, metalness: 0.55, roughness: 0.28, envMapIntensity: 0
+                }), crownList.length);
             crownList.forEach((p, i) => {
-                d.position.set(p.x, p.h + 8, p.z);
-                d.scale.set(Math.max(6, p.w * 0.08), 28 + (p.b?.fl || 8) * 2, Math.max(6, p.d * 0.08));
+                const spireH = 22 + (p.b?.fl || 8) * 1.8;
+                const spireW = Math.max(4.5, Math.min(p.w, p.d) * 0.07);
+                d.position.set(p.x, p.h + CAP_H, p.z);
+                d.scale.set(spireW, spireH, spireW);
                 d.updateMatrix();
                 spires.setMatrixAt(i, d.matrix);
             });
             spires.instanceMatrix.needsUpdate = true;
             scene.add(spires);
+
+            // slender tip antenna above the spire mass
+            const tipGeo = new THREE.BoxGeometry(1, 1, 1);
+            tipGeo.translate(0, 0.5, 0);
+            const tips = new THREE.InstancedMesh(tipGeo,
+                new THREE.MeshStandardMaterial({
+                    color: 0xdce4f0, metalness: 0.7, roughness: 0.22, envMapIntensity: 0
+                }), crownList.length);
+            crownList.forEach((p, i) => {
+                const spireH = 22 + (p.b?.fl || 8) * 1.8;
+                d.position.set(p.x, p.h + CAP_H + spireH, p.z);
+                d.scale.set(1.6, 12 + (p.b?.fl || 8) * 0.6, 1.6);
+                d.updateMatrix();
+                tips.setMatrixAt(i, d.matrix);
+            });
+            tips.instanceMatrix.needsUpdate = true;
+            scene.add(tips);
         }
 
-        // plant: AC units, water tanks, dish antennas, vents — variety on the skyline
+        // plant: AC units, water tanks, dish antennas — sit ON the parapet deck
         const acSpots = [], tankSpots = [], dishSpots = [];
         for (const p of list) {
-            const n = p.w > 150 ? 5 : p.w > 90 ? 4 : 2;
+            // keep plant inside the footprint so nothing clips past parapet edges
+            const n = p.w > 150 ? 5 : p.w > 90 ? 3 : 2;
+            const margin = Math.max(18, Math.min(p.w, p.d) * 0.22);
             for (let i = 0; i < n; i++) {
-                if (rng() < 0.18) continue;
+                if (rng() < 0.2) continue;
                 const spot = {
-                    x: p.x + (rng() - 0.5) * Math.max(20, p.w - 28),
-                    y: p.h + 7,
-                    z: p.z + (rng() - 0.5) * Math.max(20, p.d - 28),
-                    s: 0.65 + rng() * 0.95,
+                    x: p.x + (rng() - 0.5) * Math.max(12, p.w - margin),
+                    y: p.h + CAP_H,
+                    z: p.z + (rng() - 0.5) * Math.max(12, p.d - margin),
+                    s: 0.6 + rng() * 0.85,
                     r: rng() * Math.PI
                 };
                 const roll = rng();
@@ -542,7 +638,9 @@ export const World = {
         const addPlant = (spots, geo) => {
             if (!spots.length) return;
             const plant = new THREE.InstancedMesh(geo,
-                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }), spots.length);
+                new THREE.MeshStandardMaterial({
+                    vertexColors: true, metalness: 0.3, roughness: 0.55, envMapIntensity: 0
+                }), spots.length);
             spots.forEach((s, i) => {
                 d.position.set(s.x, s.y, s.z);
                 d.scale.setScalar(s.s);
@@ -772,15 +870,24 @@ export const World = {
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
             'graveyard', 'billboard', 'monument', 'arena', 'black_market',
             'nuclear', 'coal', 'dish', 'metro']);
-        const geos = [];
+        const glassGeos = [];
+        const frameGeos = [];
+        // Tasteful glass: light cyan, low opacity, slight metal sheen — not black slabs
         const glassMat = new THREE.MeshStandardMaterial({
-            color: 0x8ec8e8, metalness: 0.2, roughness: 0.12,
-            transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide
+            color: 0xd0eaf6,
+            metalness: 0.35,
+            roughness: 0.1,
+            transparent: true,
+            opacity: 0.2,
+            depthWrite: false,
+            side: THREE.DoubleSide,
+            emissive: new THREE.Color(0x204860),
+            emissiveIntensity: 0.1,
+            envMapIntensity: 0
         });
         for (const p of G.placements) {
             if (OPEN.has(p.b.type)) continue;
             if ((p.h || 0) < FLOOR_H * 1.5) continue;
-            // four street faces: quads slightly proud of wall
             const faces = [
                 { nx: 1, nz: 0, ang: Math.PI / 2, half: p.w / 2, span: p.d },
                 { nx: -1, nz: 0, ang: -Math.PI / 2, half: p.w / 2, span: p.d },
@@ -788,38 +895,73 @@ export const World = {
                 { nx: 0, nz: -1, ang: Math.PI, half: p.d / 2, span: p.w }
             ];
             for (const f of faces) {
-                // only faces near a road
-                const wx = p.x + f.nx * (f.half + 1.5);
-                const wz = p.z + f.nz * (f.half + 1.5);
+                const wx = p.x + f.nx * (f.half + 1.2);
+                const wz = p.z + f.nz * (f.half + 1.2);
                 let nearRoad = false;
                 for (const ax of (City.avenueXs || [])) if (Math.abs(wx - ax) < 90) nearRoad = true;
                 for (const sz of (City.streetZs || [])) if (Math.abs(wz - sz) < 90) nearRoad = true;
                 if (!nearRoad) continue;
-                const gw = Math.min(f.span * 0.72, 120);
-                const gh = Math.min(FLOOR_H * 1.1, 26);
+
+                const gw = Math.min(f.span * 0.68, 110);
+                const gh = Math.min(FLOOR_H * 0.95, 22);
+                const gy = gh * 0.52 + 3.5;
+
                 const g = new THREE.PlaneGeometry(gw, gh);
                 g.rotateY(f.ang);
-                g.translate(wx, gh * 0.55 + 2, wz);
-                geos.push(g);
+                g.translate(wx, gy, wz);
+                glassGeos.push(g);
+
+                // thin metal mullion frame around the pane
+                const fw = gw + 1.6, fh = gh + 1.6;
+                for (const side of [-1, 1]) {
+                    const bar = new THREE.BoxGeometry(0.7, fh, 0.55);
+                    bar.rotateY(f.ang);
+                    bar.translate(
+                        wx + f.nx * 0.4 + (-f.nz) * side * (gw * 0.5),
+                        gy,
+                        wz + f.nz * 0.4 + f.nx * side * (gw * 0.5)
+                    );
+                    frameGeos.push(paint(bar, 0xb8c0cc));
+                }
+                for (const vSide of [-1, 1]) {
+                    const rail = new THREE.BoxGeometry(fw, 0.65, 0.55);
+                    rail.rotateY(f.ang);
+                    rail.translate(
+                        wx + f.nx * 0.4,
+                        gy + vSide * (gh * 0.5),
+                        wz + f.nz * 0.4
+                    );
+                    frameGeos.push(paint(rail, 0xb8c0cc));
+                }
+                const mid = new THREE.BoxGeometry(0.55, gh * 0.92, 0.45);
+                mid.rotateY(f.ang);
+                mid.translate(wx + f.nx * 0.45, gy, wz + f.nz * 0.45);
+                frameGeos.push(paint(mid, 0xa8b2c0));
             }
         }
-        if (!geos.length) return;
-        const mesh = new THREE.Mesh(mergeGeometries(geos, false), glassMat);
-        mesh.matrixAutoUpdate = false;
-        mesh.renderOrder = 2;
-        scene.add(mesh);
-        this.streetGlass = mesh;
+        if (glassGeos.length) {
+            const mesh = new THREE.Mesh(mergeGeometries(glassGeos, false), glassMat);
+            mesh.matrixAutoUpdate = false;
+            mesh.renderOrder = 2;
+            scene.add(mesh);
+            this.streetGlass = mesh;
+        }
+        if (frameGeos.length) {
+            const frameMesh = new THREE.Mesh(mergeGeometries(frameGeos, false),
+                new THREE.MeshStandardMaterial({
+                    vertexColors: true, metalness: 0.55, roughness: 0.35, envMapIntensity: 0
+                }));
+            frameMesh.matrixAutoUpdate = false;
+            scene.add(frameMesh);
+        }
     },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
         // Mount signs FLUSH on the street-facing facade (cardinal axis only).
-        // The old code offset from the building centre along a diagonal toward
-        // the district centre, which drove the board *through* the AABB — the
-        // empty black/cyan frames you saw clipping out of Meta / Redwood etc.
+        // Face nearest road so pedestrians can read; neon plane sits outside housing.
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
             'graveyard', 'billboard', 'monument', 'arena', 'black_market',
             'nuclear', 'coal', 'dish', 'metro']);
-        // Skip pure outdoor props that don't need a branded wall sign
         const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
             'monument', 'solar', 'wind', 'dam']);
 
@@ -830,9 +972,13 @@ export const World = {
             const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
                 : b.type === 'black_market' ? '#f472b6'
                 : b.type === 'bar' ? '#e879f9'
+                : b.type === 'newspaper' ? '#fbbf24'
+                : b.type === 'embassy' ? '#94a3b8'
                 : '#22d3ee';
-            const label = b.id === 'black_market' ? 'THE UNDERGROUND' : b.name.toUpperCase();
-            signs.push({ id: b.id, text: label, emoji: b.emoji, color, p });
+            let label = b.id === 'black_market' ? 'THE UNDERGROUND'
+                : (b.name || b.id || 'BUILDING').toString().toUpperCase();
+            if (!label.trim()) label = 'BUILDING';
+            signs.push({ id: b.id, text: label, emoji: b.emoji || '◆', color, p });
         }
         if (!signs.length) { this.signCount = 0; return; }
 
@@ -847,9 +993,6 @@ export const World = {
             const b = p.b;
             const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
 
-            // Face the NEAREST road (avenue X or street Z), outward so pedestrians
-            // on the street can read the sign — not toward district centre (that
-            // put text on the courtyard side / wrong FrontSide).
             let nx = 0, nz = 0, ang = 0;
             {
                 const axs = (City.avenueXs || []).concat(City.ringX || []);
@@ -865,93 +1008,100 @@ export const World = {
                     if (d < bestZd) { bestZd = d; bestSz = sz; }
                 }
                 if (bestAd <= bestZd) {
-                    // nearest is an avenue running N-S → face ±X toward it
                     nx = Math.sign(bestAx - p.x) || 1;
                     nz = 0;
                     ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
                 } else {
-                    // nearest is a street running E-W → face ±Z toward it
                     nx = 0;
                     nz = Math.sign(bestSz - p.z) || 1;
                     ang = nz > 0 ? 0 : Math.PI;
                 }
             }
 
-            // Face width of the wall we mount on (not max extent — avoids overshoot)
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            // Sign width: fit on the face with margin so it never overhangs corners
-            const sw = Math.min(Math.max(faceW * 0.55, 40), Math.min(faceW * 0.88, 100));
+            const sw = Math.min(Math.max(faceW * 0.5, 36), Math.min(faceW * 0.82, 96));
             const sh = sw / 4.2;
 
-            // Flush to facade: board centre sits just outside the wall plane
-            const gap = pylon ? 18 : 2.2;          // wall signs almost flush
-            const boardDepth = pylon ? 5 : 3.2;
+            // gap keeps housing from sinking into the wall AABB
+            const gap = pylon ? 16 : 1.6;
+            const boardDepth = pylon ? 4.5 : 2.6;
             const bx = p.x + nx * (halfOut + gap + boardDepth / 2);
             const bz = p.z + nz * (halfOut + gap + boardDepth / 2);
             const mountY = pylon
-                ? 42
-                : Math.min(Math.max(FLOOR_H * 1.35, 30), Math.min((p.h || 60) * 0.42, 44));
+                ? 40
+                : Math.min(
+                    Math.max(FLOOR_H * 1.45, 32),
+                    Math.min((p.h || 60) * 0.38, 48)
+                );
 
-            // Housing — only slightly larger than the neon, depth = boardDepth
-            const board = new THREE.BoxGeometry(sw + 6, sh + 6, boardDepth);
+            const board = new THREE.BoxGeometry(sw + 5, sh + 5, boardDepth);
             board.rotateY(ang);
             board.translate(bx, mountY, bz);
-            structGeos.push(paint(board, 0x0c0e12));
+            structGeos.push(paint(board, 0x0a0c10));
 
-            // Accent frame around the face (thin, in front of housing)
-            const frameZ = boardDepth / 2 + 0.15;
-            const frame = new THREE.BoxGeometry(sw + 8, sh + 8, 0.6);
+            const frameZ = boardDepth / 2 + 0.12;
+            const frame = new THREE.BoxGeometry(sw + 6.5, sh + 6.5, 0.5);
             frame.rotateY(ang);
             frame.translate(bx + nx * frameZ, mountY, bz + nz * frameZ);
-            structGeos.push(paint(frame, new THREE.Color(s.color).multiplyScalar(0.55).getHex()));
+            structGeos.push(paint(frame, new THREE.Color(s.color).multiplyScalar(0.5).getHex()));
 
-            // Bottom rail accent
-            const rail = new THREE.BoxGeometry(sw + 8, 2.2, 0.7);
+            const rail = new THREE.BoxGeometry(sw + 6.5, 1.8, 0.55);
             rail.rotateY(ang);
-            rail.translate(bx + nx * frameZ, mountY - sh / 2 - 3.2, bz + nz * frameZ);
-            structGeos.push(paint(rail, new THREE.Color(s.color).multiplyScalar(0.7).getHex()));
+            rail.translate(bx + nx * frameZ, mountY - sh / 2 - 2.8, bz + nz * frameZ);
+            structGeos.push(paint(rail, new THREE.Color(s.color).multiplyScalar(0.65).getHex()));
 
             if (pylon) {
                 for (const side of [-1, 1]) {
-                    // posts along the board's width axis (perpendicular to normal)
                     const tx = -nz * side * (sw * 0.28);
                     const tz = nx * side * (sw * 0.28);
                     const postH = mountY - sh / 2;
-                    const post = new THREE.BoxGeometry(4, postH, 4);
+                    const post = new THREE.BoxGeometry(3.5, postH, 3.5);
                     post.translate(bx + tx, postH / 2, bz + tz);
                     structGeos.push(paint(post, 0x2a3038));
                 }
             }
 
-            // Neon plate sits just outside housing so it never z-fights / hides inside
-            const g = new THREE.PlaneGeometry(sw * 0.96, sh * 0.9);
-            const a = g.attributes.uv;
-            for (let i = 0; i < a.count; i++) {
-                a.setXY(i, r.u0 + a.getX(i) * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
-            }
-            const neonPush = boardDepth / 2 + 1.2;
-            g.rotateY(ang);
-            g.translate(bx + nx * neonPush, mountY, bz + nz * neonPush);
-            neonGeos.push(g);
+            // Neon plate flush outside housing (tiny offset kills z-fight).
+            // Front-facing only on façade mounts (back is in the wall). Free-standing
+            // pylons get a twin with mirrored U so the reverse face is not backwards text.
+            const makeNeonPlate = (push, flipU) => {
+                const g = new THREE.PlaneGeometry(sw * 0.94, sh * 0.88);
+                const a = g.attributes.uv;
+                for (let i = 0; i < a.count; i++) {
+                    const u = flipU ? (1 - a.getX(i)) : a.getX(i);
+                    a.setXY(i, r.u0 + u * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
+                }
+                g.rotateY(ang + (flipU ? Math.PI : 0));
+                g.translate(bx + nx * push, mountY, bz + nz * push);
+                return g;
+            };
+            const neonPush = boardDepth / 2 + 0.35;
+            neonGeos.push(makeNeonPlate(neonPush, false));
+            if (pylon) neonGeos.push(makeNeonPlate(-(boardDepth / 2 + 0.35), true));
         }
 
         if (neonGeos.length) {
             this.neonMat = new THREE.MeshBasicMaterial({
                 map: texture,
                 transparent: true,
-                alphaTest: 0.02,
-                side: THREE.DoubleSide,
+                alphaTest: 0.12,
+                // FrontSide: façade backs sit in the wall; pylons use twin quads (not mirrored DoubleSide)
+                side: THREE.FrontSide,
                 depthWrite: false,
+                depthTest: true,
                 toneMapped: false
             });
             const mesh = new THREE.Mesh(mergeGeometries(neonGeos, false), this.neonMat);
             mesh.matrixAutoUpdate = false;
+            mesh.renderOrder = 3;
             scene.add(mesh);
         }
         if (structGeos.length) {
             const structMesh = new THREE.Mesh(mergeGeometries(structGeos, false),
-                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
+                new THREE.MeshStandardMaterial({
+                    vertexColors: true, metalness: 0.25, roughness: 0.55, envMapIntensity: 0
+                }));
             structMesh.matrixAutoUpdate = false;
             scene.add(structMesh);
         }

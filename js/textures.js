@@ -19,125 +19,328 @@ function tex(c, srgb = true) {
 // ─── Building facades ────────────────────────────────────────────────────────
 // Grayscale so per-instance color tints the facade. Emissive = windows only,
 // glowing warm at night regardless of the building tint.
+// AAA street-read: mullions, sky reflections, shopfronts, dirt, expensive night glow.
 export function facade(floors, opts = {}) {
-    const W = 512, H = 512;                         // 4× the old texel budget
+    const W = 512, H = 512;
     const cols = opts.cols || 8;
     const rows = Math.max(2, floors);
+    const litRatio = opts.litRatio ?? 0.55;
     const [c, x] = canvas(W, H);
     const [ec, ex] = canvas(W, H);
     ex.fillStyle = '#000'; ex.fillRect(0, 0, W, H);
 
-    // ── cladding: concrete with a vertical gradient and grain ──
+    // ── cladding: cool concrete with vertical sky gradient ──
     const g = x.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#e2e6ee'); g.addColorStop(0.4, '#c8ced8'); g.addColorStop(0.75, '#b0b7c2'); g.addColorStop(1, '#969eaa');
+    g.addColorStop(0, '#e8ecf4');
+    g.addColorStop(0.28, '#d0d6e0');
+    g.addColorStop(0.62, '#b4bbc8');
+    g.addColorStop(0.88, '#9aa3b2');
+    g.addColorStop(1, '#7e8796');
     x.fillStyle = g; x.fillRect(0, 0, W, H);
-    for (let i = 0; i < 4200; i++) {
-        x.fillStyle = `rgba(0,0,0,${Math.random() * 0.045})`;
-        x.fillRect(Math.random() * W, Math.random() * H, 2, 2);
-    }
-    // faint weathering streaks under the floor lines
-    for (let i = 0; i < 40; i++) {
-        x.fillStyle = `rgba(70,76,86,${0.03 + Math.random() * 0.05})`;
-        x.fillRect(Math.random() * W, Math.random() * H, 1 + Math.random() * 3, 30 + Math.random() * 90);
+
+    // panel joints (curtain-wall grid under windows)
+    x.strokeStyle = 'rgba(55,62,74,0.14)'; x.lineWidth = 1;
+    for (let i = 1; i < cols; i++) {
+        x.beginPath(); x.moveTo(i * (W / cols), 0); x.lineTo(i * (W / cols), H); x.stroke();
     }
 
+    // fine aggregate grain
+    for (let i = 0; i < 5200; i++) {
+        const v = Math.random();
+        x.fillStyle = v < 0.55
+            ? `rgba(255,255,255,${Math.random() * 0.06})`
+            : `rgba(0,0,0,${Math.random() * 0.05})`;
+        x.fillRect(Math.random() * W, Math.random() * H, 1 + (v > 0.9 ? 2 : 1), 1 + (v > 0.85 ? 2 : 1));
+    }
+
+    // rain / soot streaks (mostly upper→lower)
+    for (let i = 0; i < 55; i++) {
+        const sx = Math.random() * W;
+        const sy = Math.random() * H * 0.75;
+        x.fillStyle = `rgba(48,54,64,${0.025 + Math.random() * 0.055})`;
+        x.fillRect(sx, sy, 1 + Math.random() * 2.5, 28 + Math.random() * 110);
+    }
+    // corner / edge darkening
+    const edge = x.createLinearGradient(0, 0, 18, 0);
+    edge.addColorStop(0, 'rgba(30,36,48,0.16)'); edge.addColorStop(1, 'rgba(30,36,48,0)');
+    x.fillStyle = edge; x.fillRect(0, 0, 18, H);
+    const edgeR = x.createLinearGradient(W, 0, W - 18, 0);
+    edgeR.addColorStop(0, 'rgba(30,36,48,0.16)'); edgeR.addColorStop(1, 'rgba(30,36,48,0)');
+    x.fillStyle = edgeR; x.fillRect(W - 18, 0, 18, H);
+
     const cw = W / cols;
-    const groundH = H / rows * 1.35;                // taller ground floor
+    const groundH = H / rows * 1.42;                // taller ground floor for shopfronts
     const upperH = (H - groundH) / (rows - 1 || 1);
+
+    // mullion style: 0 = cross, 1 = double vertical, 2 = grid
+    const mullionStyle = Math.floor(Math.random() * 3);
 
     // ── upper floors ──
     for (let r = 0; r < rows - 1; r++) {
         const y0 = r * upperH;
-        // floor slab band — this is what gives a facade its horizontal read
-        x.fillStyle = 'rgba(255,255,255,0.22)';
-        x.fillRect(0, y0, W, 2);
-        x.fillStyle = 'rgba(40,46,56,0.28)';
-        x.fillRect(0, y0 + upperH - 3, W, 3);
+        // floor slab band (horizontal massing read)
+        x.fillStyle = 'rgba(255,255,255,0.28)';
+        x.fillRect(0, y0, W, 2.5);
+        x.fillStyle = 'rgba(35,42,54,0.32)';
+        x.fillRect(0, y0 + upperH - 3.5, W, 3.5);
+        // thin spandrel panel under windows
+        x.fillStyle = 'rgba(90,98,112,0.18)';
+        x.fillRect(0, y0 + upperH * 0.72, W, upperH * 0.12);
 
         for (let col = 0; col < cols; col++) {
-            const wx = col * cw + cw * 0.16, ww = cw * 0.68;
-            const wy = y0 + upperH * 0.22, wh = upperH * 0.54;
-            // recessed reveal
-            x.fillStyle = 'rgba(60,66,78,0.5)';
-            x.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
-            // glass: brighter sky reflection + deep room (reads less like flat paint)
-            const wg = x.createLinearGradient(wx, wy, wx, wy + wh);
-            wg.addColorStop(0, '#b8d4f0');
-            wg.addColorStop(0.22, '#6a8eb0');
-            wg.addColorStop(0.55, '#3a4f68');
-            wg.addColorStop(1, '#1a2434');
-            x.fillStyle = wg; x.fillRect(wx, wy, ww, wh);
-            // specular highlight strip (fake reflection)
-            x.fillStyle = 'rgba(220,235,255,0.18)';
-            x.fillRect(wx + 1, wy + 1, ww * 0.35, wh * 0.28);
-            // mullion + transom + frame
-            x.fillStyle = 'rgba(210,216,226,0.65)';
-            x.fillRect(wx + ww / 2 - 0.6, wy, 1.2, wh);
-            x.fillRect(wx, wy + wh * 0.34, ww, 1.2);
-            x.strokeStyle = 'rgba(180,188,200,0.45)';
-            x.lineWidth = 1;
-            x.strokeRect(wx + 0.5, wy + 0.5, ww - 1, wh - 1);
-            // sill
-            x.fillStyle = 'rgba(240,244,250,0.7)';
-            x.fillRect(wx - 2, wy + wh + 2, ww + 4, 2.5);
+            const pad = cw * 0.12;
+            const wx = col * cw + pad, ww = cw - pad * 2;
+            const wy = y0 + upperH * 0.18, wh = upperH * 0.52;
 
-            if (Math.random() < (opts.litRatio ?? 0.55)) {
-                const warm = Math.random() < 0.78;
-                ex.fillStyle = warm ? '#ffd9a0' : '#cfeaff';
-                ex.fillRect(wx, wy, ww, wh);
-                // blinds: a lit window is rarely a perfect rectangle
+            // recessed reveal / shadow box
+            x.fillStyle = 'rgba(42,48,60,0.55)';
+            x.fillRect(wx - 2.5, wy - 2.5, ww + 5, wh + 5);
+
+            // glass body: sky reflection top → room depth bottom
+            const wg = x.createLinearGradient(wx, wy, wx + ww * 0.15, wy + wh);
+            wg.addColorStop(0, '#c8e0f8');
+            wg.addColorStop(0.18, '#8eb0d0');
+            wg.addColorStop(0.42, '#4a6a88');
+            wg.addColorStop(0.72, '#243848');
+            wg.addColorStop(1, '#121a28');
+            x.fillStyle = wg; x.fillRect(wx, wy, ww, wh);
+
+            // secondary sky specular (diagonal sheen)
+            const spec = x.createLinearGradient(wx, wy, wx + ww, wy + wh * 0.55);
+            spec.addColorStop(0, 'rgba(240,248,255,0.32)');
+            spec.addColorStop(0.35, 'rgba(200,220,245,0.12)');
+            spec.addColorStop(0.55, 'rgba(200,220,245,0)');
+            x.fillStyle = spec; x.fillRect(wx, wy, ww, wh * 0.55);
+            // vertical highlight strip (curtain-wall read)
+            x.fillStyle = 'rgba(230,240,255,0.14)';
+            x.fillRect(wx + 1, wy + 1, ww * 0.22, wh - 2);
+
+            // interior room tone (dark furniture mass at bottom of pane)
+            if (Math.random() < 0.55) {
+                x.fillStyle = 'rgba(12,16,24,0.35)';
+                x.fillRect(wx + ww * 0.15, wy + wh * 0.55, ww * 0.7, wh * 0.4);
+            }
+
+            // ── mullions ──
+            x.fillStyle = 'rgba(200,208,220,0.78)';
+            if (mullionStyle === 0) {
+                // classic cross
+                x.fillRect(wx + ww * 0.5 - 0.7, wy, 1.4, wh);
+                x.fillRect(wx, wy + wh * 0.38, ww, 1.3);
+            } else if (mullionStyle === 1) {
+                // double vertical + transom
+                x.fillRect(wx + ww * 0.33 - 0.6, wy, 1.2, wh);
+                x.fillRect(wx + ww * 0.66 - 0.6, wy, 1.2, wh);
+                x.fillRect(wx, wy + wh * 0.42, ww, 1.1);
+            } else {
+                // 2×2 grid
+                x.fillRect(wx + ww * 0.5 - 0.65, wy, 1.3, wh);
+                x.fillRect(wx, wy + wh * 0.33, ww, 1.15);
+                x.fillRect(wx, wy + wh * 0.66, ww, 1.15);
+            }
+            // outer frame
+            x.strokeStyle = 'rgba(185,194,208,0.55)';
+            x.lineWidth = 1.4;
+            x.strokeRect(wx + 0.7, wy + 0.7, ww - 1.4, wh - 1.4);
+            // head flashing
+            x.fillStyle = 'rgba(230,236,246,0.55)';
+            x.fillRect(wx - 1, wy - 1.5, ww + 2, 1.8);
+            // sill (bright ledge)
+            x.fillStyle = 'rgba(236,242,250,0.82)';
+            x.fillRect(wx - 2.5, wy + wh + 1.5, ww + 5, 2.8);
+            // bird dirt / drip under sill
+            if (Math.random() < 0.45) {
+                x.fillStyle = `rgba(55,60,70,${0.08 + Math.random() * 0.1})`;
+                x.fillRect(wx + ww * 0.2, wy + wh + 4.5, 1 + Math.random() * 2, 6 + Math.random() * 14);
+            }
+
+            // ── night emissive (expensive interior lighting) ──
+            if (Math.random() < litRatio) {
+                const warm = Math.random() < 0.74;
+                const base = warm
+                    ? (Math.random() < 0.35 ? '#ffe8b8' : Math.random() < 0.5 ? '#ffd49a' : '#ffc878')
+                    : (Math.random() < 0.4 ? '#d8ecff' : '#b8d8f8');
+                // floor-lamp gradient: brighter toward bottom of room
+                const eg = ex.createLinearGradient(wx, wy, wx, wy + wh);
+                eg.addColorStop(0, warm ? '#6a5030' : '#304858');
+                eg.addColorStop(0.35, base);
+                eg.addColorStop(0.75, base);
+                eg.addColorStop(1, warm ? '#fff0d0' : '#e8f4ff');
+                ex.fillStyle = eg; ex.fillRect(wx, wy, ww, wh);
+
+                // secondary monitor / cool task light patch
+                if (Math.random() < 0.35) {
+                    ex.fillStyle = warm ? 'rgba(140,190,255,0.55)' : 'rgba(255,220,160,0.4)';
+                    ex.fillRect(wx + ww * 0.55, wy + wh * 0.2, ww * 0.28, wh * 0.28);
+                }
+                // soft lamp blob
                 if (Math.random() < 0.4) {
-                    ex.fillStyle = '#000';
-                    ex.fillRect(wx, wy, ww, wh * (0.15 + Math.random() * 0.3));
+                    const lx = wx + ww * (0.2 + Math.random() * 0.5);
+                    const ly = wy + wh * (0.45 + Math.random() * 0.35);
+                    const rg = ex.createRadialGradient(lx, ly, 1, lx, ly, ww * 0.35);
+                    rg.addColorStop(0, warm ? 'rgba(255,240,200,0.95)' : 'rgba(220,240,255,0.9)');
+                    rg.addColorStop(1, 'rgba(0,0,0,0)');
+                    ex.fillStyle = rg; ex.fillRect(wx, wy, ww, wh);
+                }
+                // blinds / shade (mask top or half — not a hard black rectangle)
+                const shade = Math.random();
+                if (shade < 0.38) {
+                    const bh = wh * (0.18 + Math.random() * 0.28);
+                    ex.fillStyle = 'rgba(0,0,0,0.82)';
+                    ex.fillRect(wx, wy, ww, bh);
+                    // slat lines
+                    ex.strokeStyle = 'rgba(0,0,0,0.35)';
+                    ex.lineWidth = 1;
+                    for (let sy = wy; sy < wy + bh; sy += 3) {
+                        ex.beginPath(); ex.moveTo(wx, sy); ex.lineTo(wx + ww, sy); ex.stroke();
+                    }
+                } else if (shade < 0.55) {
+                    // side curtain
+                    ex.fillStyle = 'rgba(0,0,0,0.75)';
+                    ex.fillRect(wx, wy, ww * (0.18 + Math.random() * 0.15), wh);
                 }
             }
         }
     }
 
-    // ── ground floor: shopfronts, not more of the same windows ──
+    // ── ground floor: shopfronts ──
     const gy = H - groundH;
-    x.fillStyle = '#8d939d'; x.fillRect(0, gy, W, groundH);
-    x.fillStyle = 'rgba(30,34,42,0.35)'; x.fillRect(0, gy, W, 4);
+    // stone / granite plinth
+    const plinth = x.createLinearGradient(0, gy, 0, H);
+    plinth.addColorStop(0, '#9aa1ac');
+    plinth.addColorStop(0.35, '#858c98');
+    plinth.addColorStop(1, '#6a717c');
+    x.fillStyle = plinth; x.fillRect(0, gy, W, groundH);
+    // street grime band at base
+    const grime = x.createLinearGradient(0, H - groundH * 0.28, 0, H);
+    grime.addColorStop(0, 'rgba(40,44,52,0)');
+    grime.addColorStop(0.5, 'rgba(40,44,52,0.18)');
+    grime.addColorStop(1, 'rgba(28,32,40,0.38)');
+    x.fillStyle = grime; x.fillRect(0, H - groundH * 0.28, W, groundH * 0.28);
+    // cornice above ground floor
+    x.fillStyle = 'rgba(30,36,46,0.4)'; x.fillRect(0, gy, W, 4);
+    x.fillStyle = 'rgba(220,228,240,0.35)'; x.fillRect(0, gy + 4, W, 2);
+
     const bays = Math.max(3, Math.round(cols * 0.75));
     const bw = W / bays;
+    const fasciaCols = ['#3a4658', '#4a3a52', '#3a5248', '#524838', '#3a4858', '#483a4a'];
+
     for (let i = 0; i < bays; i++) {
-        const bx = i * bw + 4;
-        // glazed shopfront
-        const sg = x.createLinearGradient(0, gy, 0, H);
-        sg.addColorStop(0, '#39485c'); sg.addColorStop(1, '#1d2431');
+        const bx = i * bw + 5;
+        const bayW = bw - 10;
+        const glassY = gy + groundH * 0.22;
+        const glassH = groundH * 0.58;
+
+        // pier / column between bays
+        if (i > 0) {
+            x.fillStyle = 'rgba(70,76,88,0.55)';
+            x.fillRect(i * bw - 2.5, gy + 6, 5, groundH - 10);
+            x.fillStyle = 'rgba(200,208,220,0.25)';
+            x.fillRect(i * bw - 1, gy + 8, 2, groundH - 14);
+        }
+
+        // fascia / signboard band
+        x.fillStyle = fasciaCols[i % fasciaCols.length];
+        x.fillRect(bx, gy + groundH * 0.07, bayW, groundH * 0.12);
+        // fascia highlight edge
+        x.fillStyle = 'rgba(255,255,255,0.12)';
+        x.fillRect(bx, gy + groundH * 0.07, bayW, 1.5);
+
+        // shopfront glass
+        const sg = x.createLinearGradient(bx, glassY, bx, glassY + glassH);
+        sg.addColorStop(0, '#5a7898');
+        sg.addColorStop(0.25, '#3a5068');
+        sg.addColorStop(0.6, '#243848');
+        sg.addColorStop(1, '#141c28');
         x.fillStyle = sg;
-        x.fillRect(bx, gy + groundH * 0.2, bw - 8, groundH * 0.62);
-        x.strokeStyle = 'rgba(226,232,240,0.45)'; x.lineWidth = 2;
-        x.strokeRect(bx, gy + groundH * 0.2, bw - 8, groundH * 0.62);
-        // fascia over the shopfront
-        x.fillStyle = ['#3d4a5e', '#4a3d55', '#3d5548', '#55483d'][i % 4];
-        x.fillRect(bx, gy + groundH * 0.06, bw - 8, groundH * 0.13);
-        // shopfronts stay lit later than offices
-        if (Math.random() < 0.75) {
-            ex.fillStyle = '#ffe6b8';
-            ex.fillRect(bx + 3, gy + groundH * 0.23, bw - 14, groundH * 0.56);
+        x.fillRect(bx, glassY, bayW, glassH);
+        // glass reflection sheen
+        const sh = x.createLinearGradient(bx, glassY, bx + bayW * 0.5, glassY + glassH * 0.5);
+        sh.addColorStop(0, 'rgba(210,230,255,0.28)');
+        sh.addColorStop(0.5, 'rgba(180,210,240,0.08)');
+        sh.addColorStop(1, 'rgba(180,210,240,0)');
+        x.fillStyle = sh; x.fillRect(bx, glassY, bayW, glassH * 0.55);
+
+        // frame + mid mullion
+        x.strokeStyle = 'rgba(220,228,240,0.55)'; x.lineWidth = 2.2;
+        x.strokeRect(bx + 1, glassY + 1, bayW - 2, glassH - 2);
+        x.fillStyle = 'rgba(200,210,224,0.55)';
+        x.fillRect(bx + bayW * 0.5 - 1, glassY, 2, glassH);
+        // transom bar
+        x.fillRect(bx, glassY + glassH * 0.22, bayW, 1.5);
+        // kick plate
+        x.fillStyle = 'rgba(50,56,66,0.75)';
+        x.fillRect(bx, glassY + glassH - 5, bayW, 5);
+        x.fillStyle = 'rgba(180,188,200,0.25)';
+        x.fillRect(bx, glassY + glassH - 5, bayW, 1);
+
+        // warm shop interior emissive (display + ceiling cans)
+        if (Math.random() < 0.82) {
+            const eg = ex.createLinearGradient(bx, glassY, bx, glassY + glassH);
+            eg.addColorStop(0, '#fff2d0');
+            eg.addColorStop(0.45, '#ffe0a8');
+            eg.addColorStop(1, '#e8b060');
+            ex.fillStyle = eg;
+            ex.fillRect(bx + 3, glassY + 3, bayW - 6, glassH - 8);
+            // product / mannequin silhouettes (dark against light)
+            if (Math.random() < 0.5) {
+                ex.fillStyle = 'rgba(0,0,0,0.25)';
+                ex.fillRect(bx + bayW * 0.2, glassY + glassH * 0.35, bayW * 0.15, glassH * 0.5);
+                ex.fillRect(bx + bayW * 0.6, glassY + glassH * 0.4, bayW * 0.18, glassH * 0.45);
+            }
+            // cool accent LED strip at top of glass
+            if (Math.random() < 0.4) {
+                ex.fillStyle = '#88d4ff';
+                ex.fillRect(bx + 4, glassY + 4, bayW - 8, 3);
+            }
         }
     }
-    // main entrance in the middle bay
-    const ex0 = W / 2 - bw * 0.34;
-    x.fillStyle = '#161b25';
-    x.fillRect(ex0, gy + groundH * 0.18, bw * 0.68, groundH * 0.82);
-    x.fillStyle = 'rgba(226,232,240,0.5)';
-    x.fillRect(ex0 + bw * 0.33, gy + groundH * 0.18, 2, groundH * 0.82);
-    ex.fillStyle = '#fff2d6';
-    ex.fillRect(ex0 + 4, gy + groundH * 0.22, bw * 0.68 - 8, groundH * 0.7);
-    // canopy shadow
-    x.fillStyle = 'rgba(20,24,32,0.5)';
-    x.fillRect(ex0 - 6, gy + groundH * 0.12, bw * 0.68 + 12, 6);
+
+    // main entrance (centre bay, full height doors)
+    const mid = Math.floor(bays / 2);
+    const ex0 = mid * bw + bw * 0.12;
+    const exW = bw * 0.76;
+    x.fillStyle = '#10141c';
+    x.fillRect(ex0, gy + groundH * 0.16, exW, groundH * 0.84);
+    // door glass panels
+    const dg = x.createLinearGradient(ex0, gy + groundH * 0.2, ex0, H);
+    dg.addColorStop(0, '#3a5068'); dg.addColorStop(1, '#1a2434');
+    x.fillStyle = dg;
+    x.fillRect(ex0 + 4, gy + groundH * 0.22, exW * 0.42 - 6, groundH * 0.72);
+    x.fillRect(ex0 + exW * 0.5 + 2, gy + groundH * 0.22, exW * 0.42 - 6, groundH * 0.72);
+    // centre mullion / door split
+    x.fillStyle = 'rgba(210,218,230,0.7)';
+    x.fillRect(ex0 + exW * 0.5 - 1.5, gy + groundH * 0.16, 3, groundH * 0.84);
+    // handles
+    x.fillStyle = 'rgba(220,200,140,0.85)';
+    x.fillRect(ex0 + exW * 0.42, gy + groundH * 0.52, 3, 10);
+    x.fillRect(ex0 + exW * 0.55, gy + groundH * 0.52, 3, 10);
+    // lobby glow
+    ex.fillStyle = '#fff4dc';
+    ex.fillRect(ex0 + 5, gy + groundH * 0.24, exW - 10, groundH * 0.72);
+    // canopy / marquee shadow + bar
+    x.fillStyle = 'rgba(16,20,28,0.55)';
+    x.fillRect(ex0 - 8, gy + groundH * 0.1, exW + 16, 7);
+    x.fillStyle = 'rgba(200,210,224,0.4)';
+    x.fillRect(ex0 - 8, gy + groundH * 0.1, exW + 16, 2);
+
+    // final street soot speckles near base
+    for (let i = 0; i < 180; i++) {
+        x.fillStyle = `rgba(20,24,32,${Math.random() * 0.2})`;
+        x.fillRect(Math.random() * W, H - 8 - Math.random() * 20, 1.5, 1.5);
+    }
 
     const map = tex(c), emissive = tex(ec);
+    map.anisotropy = 8;
+    emissive.anisotropy = 4;
     return { map, emissiveMap: emissive };
 }
 
 // ─── Neon sign atlas ─────────────────────────────────────────────────────────
-// All building signs on ONE 2048² texture → merged quads → 1 draw call.
+// All building signs on ONE 4096×2048 texture → merged quads → 1 draw call.
+// High-contrast readable text; never empty boards; neon-friendly plates.
 export function signAtlas(signs) {
-    // signs: [{ id, text, color }]  — cells 512x128 on 4096x2048 (8x16)
+    // signs: [{ id, text, color, emoji }]  — cells 512×128 on 4096×2048 (8×16)
     const COLS = 8, ROWS = 16, CW = 512, CH = 128;
     const [c, x] = canvas(COLS * CW, ROWS * CH);
     x.clearRect(0, 0, c.width, c.height);
@@ -146,32 +349,77 @@ export function signAtlas(signs) {
         if (i >= COLS * ROWS) return;
         const col = i % COLS, row = Math.floor(i / COLS);
         const px = col * CW, py = row * CH;
-        // solid opaque plate (alphaTest-friendly)
-        x.fillStyle = '#0a0e18';
-        roundRect(x, px + 6, py + 18, CW - 12, CH - 36, 8); x.fill();
-        // neon border
         const neon = s.color || '#22d3ee';
-        x.strokeStyle = neon; x.lineWidth = 5;
-        x.shadowColor = neon; x.shadowBlur = 16;
-        roundRect(x, px + 6, py + 18, CW - 12, CH - 36, 8); x.stroke();
+        const padX = 8, padY = 16;
+        const pw = CW - padX * 2, ph = CH - padY * 2;
+
+        // solid opaque plate (alphaTest-friendly) — never transparent/empty
+        const plate = x.createLinearGradient(px, py, px, py + CH);
+        plate.addColorStop(0, '#121820');
+        plate.addColorStop(0.5, '#0a0e16');
+        plate.addColorStop(1, '#080c14');
+        x.fillStyle = plate;
+        roundRect(x, px + padX, py + padY, pw, ph, 7); x.fill();
+
+        // inner inset bevel
+        x.strokeStyle = 'rgba(255,255,255,0.08)';
+        x.lineWidth = 2;
+        roundRect(x, px + padX + 3, py + padY + 3, pw - 6, ph - 6, 5); x.stroke();
+        x.strokeStyle = 'rgba(0,0,0,0.45)';
+        x.lineWidth = 1.5;
+        roundRect(x, px + padX + 5, py + padY + 5, pw - 10, ph - 10, 4); x.stroke();
+
+        // neon border (outer)
+        x.strokeStyle = neon; x.lineWidth = 4.5;
+        x.shadowColor = neon; x.shadowBlur = 18;
+        roundRect(x, px + padX, py + padY, pw, ph, 7); x.stroke();
+        // second thinner pass for tube sharpness
         x.shadowBlur = 0;
-        // emoji — system font fallbacks (Silkscreen often missing at atlas build)
+        x.lineWidth = 1.5;
+        x.strokeStyle = '#ffffff';
+        x.globalAlpha = 0.35;
+        roundRect(x, px + padX + 1.5, py + padY + 1.5, pw - 3, ph - 3, 6); x.stroke();
+        x.globalAlpha = 1;
+
+        // emoji — system font fallbacks
         x.textAlign = 'left'; x.textBaseline = 'middle';
-        x.font = '40px "Segoe UI Emoji","Apple Color Emoji",sans-serif';
+        const emoji = (s.emoji || '◆').toString().slice(0, 4);
+        x.font = '42px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
         x.fillStyle = '#ffffff';
-        x.fillText((s.emoji || '◆').toString().slice(0, 4), px + 22, py + CH / 2);
-        // name — always draw with available fonts, high contrast
-        const label = (s.text || s.id || '?').toString();
-        let fs = 36;
-        x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
-        while (x.measureText(label).width > CW - 130 && fs > 16) {
+        x.fillText(emoji, px + 22, py + CH / 2);
+
+        // name — always draw; high-contrast white with dark outline + soft neon halo
+        let label = (s.text || s.id || 'BUILDING').toString().trim().toUpperCase();
+        if (!label) label = 'BUILDING';
+        let fs = 38;
+        const maxW = CW - 128;
+        x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace`;
+        while (x.measureText(label).width > maxW && fs > 15) {
             fs -= 2;
-            x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+            x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace`;
         }
-        x.fillStyle = '#f8fafc';
-        x.shadowColor = neon; x.shadowBlur = 12;
-        x.fillText(label, px + 78, py + CH / 2, CW - 100);
+        // if still too wide, truncate with ellipsis
+        if (x.measureText(label).width > maxW) {
+            while (label.length > 3 && x.measureText(label + '…').width > maxW) {
+                label = label.slice(0, -1);
+            }
+            label = label + '…';
+        }
+        const tx = px + 78, ty = py + CH / 2;
+        // dark outline for daylight readability
+        x.lineWidth = 4;
+        x.strokeStyle = 'rgba(0,0,0,0.85)';
+        x.lineJoin = 'round';
+        x.strokeText(label, tx, ty, maxW);
+        // neon glow behind glyphs
+        x.fillStyle = '#ffffff';
+        x.shadowColor = neon; x.shadowBlur = 14;
+        x.fillText(label, tx, ty, maxW);
         x.shadowBlur = 0;
+        // crisp white fill pass
+        x.fillStyle = '#f8fafc';
+        x.fillText(label, tx, ty, maxW);
+
         // UV: Three.js CanvasTexture v=0 at bottom
         const u0 = px / c.width, u1 = (px + CW) / c.width;
         const v0 = 1 - (py + CH) / c.height, v1 = 1 - py / c.height;

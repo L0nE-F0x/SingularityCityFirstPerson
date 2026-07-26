@@ -464,6 +464,8 @@ export function getStage(rel, ret, ph) {
 }
 
 // Daily schedule (ported from production). dp = day fraction 0..1, seed = per-citizen hash.
+// Street-level notes: work/sleep resolve to indoors in citizens.js; commute bid:null
+// means "to HQ" (evening sets resId). Thin outdoor slices keep sidewalks alive at noon.
 export function getAct(stg, dp, seed, model) {
     if (stg === 'retired') return { act: 'sleep', bid: 'graveyard' };
     if (stg === 'rumored' || stg === 'baby') return { act: dp > .2 && dp < .8 ? 'work' : 'sleep', bid: 'nursery' };
@@ -472,35 +474,48 @@ export function getAct(stg, dp, seed, model) {
     const resId = 'res_' + region;
     const s = (seed * 17) % 100;
     if (dp < 0.25) return { act: 'sleep', bid: resId };
+    // Staggered morning leave — sidewalks fill, not a single teleport wave
     if (dp < 0.35) {
-        const leaveTime = 0.27 + (s / 100) * 0.07;
+        const leaveTime = 0.26 + (s / 100) * 0.08;
         return dp < leaveTime ? { act: 'sleep', bid: resId } : { act: 'commute', bid: null };
     }
-    if (dp < 0.50) return { act: 'work', bid: null };
-    if (dp < 0.5625) {
-        if (s < 45) return { act: 'lunch', bid: 'cafe' };
-        if (s < 70) return { act: 'socialize', bid: 'park' };
+    // Morning work + ~10% coffee/errand so streets aren't empty after rush
+    if (dp < 0.50) {
+        if (s >= 92) return { act: 'lunch', bid: 'cafe' };
+        if (s >= 86) return { act: 'socialize', bid: 'park' };
         return { act: 'work', bid: null };
     }
-    if (dp < 0.65) return { act: 'work', bid: null };
+    // Lunch window — majority leave the building
+    if (dp < 0.5625) {
+        if (s < 48) return { act: 'lunch', bid: 'cafe' };
+        if (s < 74) return { act: 'socialize', bid: 'park' };
+        return { act: 'work', bid: null };
+    }
+    // Afternoon block + light outdoor residual
+    if (dp < 0.65) {
+        if (s >= 90) return { act: 'socialize', bid: 'park' };
+        if (s >= 85) return { act: 'lunch', bid: 'cafe' };
+        return { act: 'work', bid: null };
+    }
     if (dp < 0.72) {
         if (model.os && s < 30) return { act: 'share', bid: 'open_square' };
-        if (s < 15) return { act: 'socialize', bid: 'park' };
+        if (s < 18) return { act: 'socialize', bid: 'park' };
         return { act: 'work', bid: null };
     }
     if (dp < 0.80) {
         if (s < 18) return { act: 'arena', bid: 'arena' };
-        if (s < 32) return { act: 'socialize', bid: 'park' };
-        if (s < 55) return { act: 'socialize', bid: 'neon_bar' };
+        if (s < 34) return { act: 'socialize', bid: 'park' };
+        if (s < 58) return { act: 'socialize', bid: 'neon_bar' };
         return { act: 'work', bid: null };
     }
+    // Staggered evening commute home
     if (dp < 0.95) {
-        const goHomeTime = 0.80 + (s / 100) * 0.08;
+        const goHomeTime = 0.80 + (s / 100) * 0.09;
         if (dp < goHomeTime) return { act: 'work', bid: null };
-        if (s < 20) return { act: 'socialize', bid: 'neon_bar' };
+        if (s < 22) return { act: 'socialize', bid: 'neon_bar' };
         return { act: 'commute', bid: resId };
     }
-    if (s < 10) return { act: 'socialize', bid: 'neon_bar' };
+    if (s < 12) return { act: 'socialize', bid: 'neon_bar' };
     return { act: 'sleep', bid: resId };
 }
 
@@ -512,7 +527,8 @@ export const LAB_HQ = {
 
 /**
  * Founder / CEO schedule — more visible & mobile than rank-and-file models.
- * Findable at HQ most of the day, plus lunch, parks, bars, VIP commute windows.
+ * Stay outdoors (findable near HQ) most of the day; only sleep goes indoors.
+ * Extra lunch/park/bar beats so they migrate and aren't glued to one lobby.
  */
 export function getFounderAct(dp, seed, model) {
     const region = (model.lab && LABS[model.lab] && LABS[model.lab].region) || 'us';
@@ -521,21 +537,21 @@ export function getFounderAct(dp, seed, model) {
     const s = (seed * 31) % 100;
     if (dp < 0.22) return { act: 'sleep', bid: resId };
     if (dp < 0.30) return { act: 'commute', bid: hq };
-    if (dp < 0.48) return { act: 'work', bid: hq };
-    if (dp < 0.55) {
-        if (s < 40) return { act: 'lunch', bid: 'cafe' };
-        if (s < 70) return { act: 'socialize', bid: 'park' };
+    if (dp < 0.46) return { act: 'work', bid: hq };
+    if (dp < 0.56) {
+        if (s < 45) return { act: 'lunch', bid: 'cafe' };
+        if (s < 75) return { act: 'socialize', bid: 'park' };
         return { act: 'work', bid: hq };
     }
-    if (dp < 0.70) return { act: 'work', bid: hq };
+    if (dp < 0.68) return { act: 'work', bid: hq };
     if (dp < 0.78) {
-        if (s < 25) return { act: 'socialize', bid: 'open_square' };
-        if (s < 45) return { act: 'arena', bid: 'arena' };
+        if (s < 30) return { act: 'socialize', bid: 'open_square' };
+        if (s < 50) return { act: 'arena', bid: 'arena' };
         return { act: 'work', bid: hq };
     }
     if (dp < 0.88) {
-        if (s < 35) return { act: 'socialize', bid: 'neon_bar' };
-        if (s < 55) return { act: 'socialize', bid: 'park' };
+        if (s < 40) return { act: 'socialize', bid: 'neon_bar' };
+        if (s < 60) return { act: 'socialize', bid: 'park' };
         return { act: 'work', bid: hq };
     }
     if (dp < 0.94) return { act: 'commute', bid: resId };

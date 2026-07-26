@@ -128,11 +128,20 @@ function applyWalkShader(mat) {
                 else if ( aLimb < 2.5 ) { ang = -s; pivot = 7.2; }
                 else if ( aLimb < 3.5 ) { ang = -s; pivot = 14.0; }
                 else                    { ang =  s; pivot = 14.0; }
-                ang *= aWalk * 0.6;
+                ang *= aWalk * 0.78;
                 float ca = cos( ang ), sa = sin( ang );
                 float py = transformed.y - pivot;
                 transformed.y = py * ca - transformed.z * sa + pivot;
                 transformed.z = py * sa + transformed.z * ca;
+                // slight lateral sway on arms for a livelier silhouette
+                if ( aLimb > 2.5 ) transformed.x += sa * aWalk * 0.35;
+            }
+            // subtle torso lean into the stride
+            if ( aLimb < 0.5 && aPart < 0.5 && aWalk > 0.05 ) {
+                float lean = sin( aPhase ) * aWalk * 0.04;
+                float py = transformed.y - 10.0;
+                transformed.y = py * cos( lean ) - transformed.z * sin( lean ) + 10.0;
+                transformed.z = py * sin( lean ) + transformed.z * cos( lean );
             }
             // rumored: slight float bob
             if ( aStage > 2.5 && aStage < 3.5 ) {
@@ -159,9 +168,11 @@ function applyWalkShader(mat) {
             if ( aLimb > 10.5 && aLimb < 11.5 ) vColor = vec3(0.15, 0.39, 0.92);
         `);
     };
-    mat.customProgramCacheKey = () => 'citizen-walk-stage-v4-silhouette';
+    mat.customProgramCacheKey = () => 'citizen-walk-stage-v5-silhouette';
     return mat;
 }
+
+const INDOOR_ACTS = new Set(['work', 'sleep', 'train']);
 
 export const Citizens = {
     list: [],
@@ -249,6 +260,16 @@ export const Citizens = {
         this._assignAll();
     },
 
+    /* Rank-and-file vanish into HQs / homes for work, sleep, train, and after
+       finishing a commute leg (clock-in / get-home). Founders stay outdoors
+       and findable except while sleeping. ~8% residual keeps sidewalks alive. */
+    _shouldBeIndoors(c) {
+        if (c.model.founder) return c.act === 'sleep';
+        if (c.seed <= 0.08) return false;
+        // commute counts once they've arrived (callers gate on path-empty)
+        return INDOOR_ACTS.has(c.act) || c.act === 'commute';
+    },
+
     _writeMatrix(c) {
         const d = this._dummy;
         // "Inside" buildings during work/sleep — hide so streets show real commuters
@@ -265,7 +286,8 @@ export const Citizens = {
         let s = STAGES[c.stage]?.size || 1;
         if (c.model.founder) s *= 1.18;
         const ground = City.onSidewalk(c.x, c.z) ? KERB_H : 0;
-        d.position.set(c.x, ground + Math.abs(Math.sin(c.bob)) * 0.35 * c.walkAmt, c.z);
+        // vertical stride bounce — a bit taller than before so silhouettes read at distance
+        d.position.set(c.x, ground + Math.abs(Math.sin(c.bob)) * 0.55 * c.walkAmt, c.z);
         d.rotation.y = Math.atan2(c.dirX, c.dirZ);
         d.scale.setScalar(s);
         d.updateMatrix();
@@ -277,6 +299,7 @@ export const Citizens = {
 
     _assignAll() {
         this._bidCount = new Map();
+        this._founderSlot = 0;
         for (const c of this.list) this._assign(c, true);
     },
 
@@ -299,6 +322,23 @@ export const Citizens = {
         return City.offRoad(tb.worldX + Math.cos(a) * r, tb.worldZ + Math.sin(a) * r);
     },
 
+    /* Sidewalk circuit away from the HQ door — outdoor workers / errand folk
+       walk the block instead of stacking on the doormat. */
+    _streetPatrol(c, tb) {
+        const base = Math.max(tb.worldW, tb.worldD) / 2 + 70;
+        const r = base + 40 + ((c.venueSlot || 0) % 9) * 35 + c.seed * 55;
+        const a = (c.seed * 6.283) + ((c.venueSlot || 0) * 0.7) + (c._patrolN || 0) * 1.1;
+        return City.offRoad(tb.worldX + Math.cos(a) * r, tb.worldZ + Math.sin(a) * r);
+    },
+
+    _paceFor(c, act) {
+        const mult = STAGES[c.stage]?.speed || 1;
+        if (c.model.founder) return (95 + Math.random() * 35) * mult;
+        if (act === 'commute') return (100 + Math.random() * 45) * mult;
+        if (INDOOR_ACTS.has(act)) return (72 + Math.random() * 30) * mult;
+        return (85 + Math.random() * 40) * mult;
+    },
+
     _assign(c, snap) {
         let act, bid;
         if (c.model.founder) {
@@ -306,19 +346,25 @@ export const Citizens = {
         } else {
             ({ act, bid } = getAct(c.stage, G.dayPhase, c.seed, c.model));
         }
-        c.act = act;
         // resolve target building
         let targetBid = bid;
         if (!targetBid) {
-            if (act === 'work' || act === 'train') targetBid = LAB_HQ[c.lab] || 'open_square';
-            else if (act === 'commute') targetBid = c.homeBid;
-            else targetBid = LAB_HQ[c.lab] || c.homeBid;
+            // Morning commute uses bid:null → HQ (evening commute sets resId explicitly)
+            if (act === 'work' || act === 'train' || act === 'commute') {
+                targetBid = LAB_HQ[c.lab] || 'open_square';
+            } else {
+                targetBid = LAB_HQ[c.lab] || c.homeBid;
+            }
         }
         if (c.stage === 'retired') targetBid = 'graveyard';
         // archetype pull: free-time haunts (founders keep their CEO schedule)
         if (!c.model.founder && c.arche && c.arche.acts.includes(act) && G.bldById[c.arche.venue]) {
             targetBid = c.arche.venue;
         }
+
+        const prevAct = c._lastAct;
+        const prevBid = c._lastBid;
+        c.act = act;
         c.targetBid = targetBid;
         const tb = G.bldById[targetBid];
         if (!tb) return;
@@ -334,53 +380,66 @@ export const Citizens = {
             c.venueSlot = k + 6; // leave 0..5 for founders
         }
 
-        const indoorActs = new Set(['work', 'sleep', 'train']);
-        // Leaving indoors → spawn at previous building door and walk
-        if (!snap && c.indoors && !indoorActs.has(act)) {
-            const from = G.bldById[c._lastBid] || tb;
+        // Already inside at this building and the new act is still indoor —
+        // stay put (commute→work at HQ must not eject everyone back onto the street).
+        if (!snap && c.indoors && this._shouldBeIndoors(c) && targetBid === prevBid) {
+            c._lastBid = targetBid;
+            c._lastAct = act;
+            return;
+        }
+
+        // Leaving indoors → spawn at previous building door and walk out
+        if (!snap && c.indoors && !this._shouldBeIndoors(c)) {
+            const from = G.bldById[prevBid] || tb;
             if (from) {
                 const door = this._venueSpot(c, from);
                 c.x = door.x; c.z = door.z;
             }
             c.indoors = false;
             this._routeTo(c, tb);
-            c.speed = (90 + Math.random() * 40) * (STAGES[c.stage]?.speed || 1); // commute pace
+            c.speed = this._paceFor(c, act);
         } else if (snap) {
-            // At boot: ~35% already walking, rest at venue (may go indoors)
-            if (Math.random() < 0.35 || !indoorActs.has(act)) {
-                // start somewhere else and walk in
+            // Boot: rush-hour walkers + settled indoors (not a wall of HQ loiterers)
+            const rush = act === 'commute' || (!INDOOR_ACTS.has(act));
+            if (rush || Math.random() < 0.28) {
                 const other = G.bldById[c.homeBid] || tb;
                 const start = this._venueSpot(c, other);
-                c.x = start.x + (Math.random() - 0.5) * 200;
-                c.z = start.z + (Math.random() - 0.5) * 200;
+                c.x = start.x + (Math.random() - 0.5) * 280;
+                c.z = start.z + (Math.random() - 0.5) * 280;
                 c.indoors = false;
                 this._routeTo(c, tb);
+                c.speed = this._paceFor(c, act);
             } else {
-                const p = this._venueSpot(c, tb);
+                const p = this._shouldBeIndoors(c)
+                    ? this._venueSpot(c, tb)
+                    : this._streetPatrol(c, tb);
                 c.x = p.x; c.z = p.z;
                 c.path = [];
-                // most workers/sleepers are inside — not loitering outside
-                c.indoors = indoorActs.has(act) && Math.random() < 0.72 && !c.model.founder;
+                c.indoors = this._shouldBeIndoors(c);
             }
-        } else if (c.targetBid !== c._lastBid || c.act !== c._lastAct) {
+        } else if (targetBid !== prevBid || act !== prevAct) {
+            // Destination / act changed — leave any building and re-route
+            if (c.indoors) {
+                const from = G.bldById[prevBid] || tb;
+                if (from) {
+                    const door = this._venueSpot(c, from);
+                    c.x = door.x; c.z = door.z;
+                }
+            }
             c.indoors = false;
             this._routeTo(c, tb);
-            // If very far, teleport partway so they arrive this act
+            // Far teleports: place on approach so they arrive this act window
             const dist = Math.hypot(c.x - tb.worldX, c.z - tb.worldZ);
             if (dist > 1400) {
                 const p = this._venueSpot(c, tb);
-                // place on approach path ~400u out
                 const ang = Math.atan2(c.z - tb.worldZ, c.x - tb.worldX);
                 c.x = p.x + Math.cos(ang) * 350;
                 c.z = p.z + Math.sin(ang) * 350;
                 this._routeTo(c, tb);
             }
-            if (indoorActs.has(act)) {
-                c.speed = (70 + Math.random() * 35) * (STAGES[c.stage]?.speed || 1);
-            } else {
-                c.speed = (85 + Math.random() * 45) * (STAGES[c.stage]?.speed || 1);
-            }
+            c.speed = this._paceFor(c, act);
         }
+        // same act+bid, still outdoors: leave path alone (finish walking in / patrol)
         c._lastBid = targetBid;
         c._lastAct = act;
     },
@@ -410,11 +469,11 @@ export const Citizens = {
 
     update(dt) {
         if (!this.mesh) return;
-        // Re-schedule when the day-phase band changes, or every ~8s (founders
-        // should visibly migrate; wall-clock dayPhase alone barely moves).
+        // Re-schedule on day-phase band change, or every ~6s so staggered leave
+        // windows and founder migrations actually fire on-screen.
         this._schedTimer += dt;
         const band = Math.floor(G.dayPhase * 48); // ~30-minute bands
-        if (this._schedTimer > 5 || band !== this._lastBand) {
+        if (this._schedTimer > 6 || band !== this._lastBand) {
             this._schedTimer = 0;
             this._lastBand = band;
             this._bidCount = new Map();
@@ -431,40 +490,58 @@ export const Citizens = {
 
         for (let k = 0; k < half; k++) {
             const c = this.list[(start + k) % n];
+            if (c.indoors) {
+                // Keep matrices parked; no street sim while hidden
+                this._writeMatrix(c);
+                continue;
+            }
             if (c.path.length && c.wp < c.path.length) {
                 const t = c.path[c.wp];
                 const dx = t.x - c.x, dz = t.z - c.z;
                 const dist = Math.hypot(dx, dz);
-                if (dist < 6) { c.wp++; continue; }
+                if (dist < 6) {
+                    c.wp++;
+                    this._writeMatrix(c);
+                    continue;
+                }
                 const v = c.speed * step;
                 c.x += (dx / dist) * v;
                 c.z += (dz / dist) * v;
                 c.dirX = dx / dist; c.dirZ = dz / dist;
-                // stride rate follows walking speed; the shader swings the
-                // limbs off this phase
-                c.bob += step * (c.speed / 12);
-                c.walkAmt = Math.min(1, c.walkAmt + step * 4);
+                // stride rate follows walking speed; the shader swings the limbs
+                c.bob += step * (c.speed / 11);
+                c.walkAmt = Math.min(1, c.walkAmt + step * 5);
             } else {
-                // Arrived: go indoors for work/sleep/train (except founders + a few loiterers)
-                if (!c.indoors && (c.act === 'work' || c.act === 'sleep' || c.act === 'train')) {
-                    if (!c.model.founder && (c.seed > 0.22)) {
-                        c.indoors = true;
-                        c.path = [];
+                // Arrived: clock in / go home / work / sleep. Hiding on arrival
+                // keeps HQ doors clear once the walk is done.
+                if (this._shouldBeIndoors(c)) {
+                    c.indoors = true;
+                    c.path = [];
+                    c.walkAmt = 0;
+                } else {
+                    // Outdoor residual + founders + lunch/park/bar: keep moving
+                    c.idleT -= step;
+                    if (c.idleT <= 0) {
+                        c.idleT = 1.8 + Math.random() * 4.5;
+                        const tb = G.bldById[c.targetBid];
+                        if (tb) {
+                            c._patrolN = (c._patrolN || 0) + 1;
+                            // Founders near entrance (findable); outdoor workers
+                            // patrol the block (no HQ door pile-up).
+                            const s = c.model.founder || !INDOOR_ACTS.has(c.act)
+                                ? this._venueSpot(c, tb)
+                                : this._streetPatrol(c, tb);
+                            const jitter = c.model.founder ? 28 : 60;
+                            c.path = [City.offRoad(
+                                s.x + (Math.random() - 0.5) * jitter,
+                                s.z + (Math.random() - 0.5) * jitter
+                            )];
+                            c.wp = 0;
+                            c.speed = this._paceFor(c, c.act) * (c.model.founder ? 0.55 : 0.75);
+                        }
                     }
+                    c.walkAmt = Math.max(0, c.walkAmt - step * 4);
                 }
-                // outdoor idle wander near target (lunch / park / bar / founders)
-                c.idleT -= step;
-                if (c.idleT <= 0 && !c.indoors) {
-                    c.idleT = 2 + Math.random() * 5;
-                    const tb = G.bldById[c.targetBid];
-                    if (tb) {
-                        const s = this._venueSpot(c, tb);
-                        c.path = [City.offRoad(s.x + (Math.random() - 0.5) * 44,
-                            s.z + (Math.random() - 0.5) * 44)];
-                        c.wp = 0;
-                    }
-                }
-                c.walkAmt = Math.max(0, c.walkAmt - step * 4);
             }
             this._writeMatrix(c);
         }
@@ -472,10 +549,11 @@ export const Citizens = {
         this.anim.needsUpdate = true;
     },
 
-    // nearest citizen within maxDist of a point (for interaction)
+    // nearest *visible* citizen within maxDist (skip people inside buildings)
     nearest(x, z, maxDist) {
         let best = null, bd = maxDist;
         for (const c of this.list) {
+            if (c.indoors) continue;
             const d = Math.hypot(c.x - x, c.z - z);
             if (d < bd) { bd = d; best = c; }
         }

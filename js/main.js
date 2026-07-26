@@ -261,6 +261,7 @@ async function boot() {
             CitizenOfDay.update(dt);
             Traffic.update(dt, G.time);
             Signals.update(dt);
+            // Weather before Metro: metro re-locks fog/bg/sky every ride frame after weather writes.
             Weather.update(dt, G.time);
             World.update(dt, G.time);
             VCDealFlow.update(dt);
