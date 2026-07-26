@@ -1065,7 +1065,7 @@ export const World = {
                     new THREE.BoxGeometry(sw * 0.95, sh * 0.95, 2),
                     new THREE.MeshStandardMaterial({ color: 0x0a0e14, metalness: 0.3, roughness: 0.5 })
                 );
-                board.position.set(bx, mountY, bz);
+                board.position.set(bx - nx * 3, mountY, bz - nz * 3);
                 // orient board roughly toward facade normal
                 board.rotation.y = Math.atan2(nx, nz);
                 group.add(board);
