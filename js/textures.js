@@ -339,97 +339,117 @@ export function facade(floors, opts = {}) {
 // ─── Neon sign atlas ─────────────────────────────────────────────────────────
 // All building signs on ONE 4096×2048 texture → merged quads → 1 draw call.
 // High-contrast readable text; never empty boards; neon-friendly plates.
+/** One full-bleed sign plate texture (no atlas UV math — always readable). */
+export function makeSignPlate(text, color = '#22d3ee', emoji = '') {
+    const W = 512, H = 128;
+    const [c, x] = canvas(W, H);
+    // Full opaque background
+    x.fillStyle = '#0a101c';
+    x.fillRect(0, 0, W, H);
+    // Inner panel
+    x.fillStyle = '#111827';
+    x.fillRect(6, 6, W - 12, H - 12);
+    // Neon border
+    const neon = color || '#22d3ee';
+    x.strokeStyle = neon;
+    x.lineWidth = 6;
+    x.shadowColor = neon;
+    x.shadowBlur = 16;
+    x.strokeRect(8, 8, W - 16, H - 16);
+    x.shadowBlur = 0;
+    x.strokeStyle = 'rgba(255,255,255,0.45)';
+    x.lineWidth = 2;
+    x.strokeRect(12, 12, W - 24, H - 24);
+
+    // Label
+    let label = String(text || 'BUILDING').trim().toUpperCase();
+    if (!label) label = 'BUILDING';
+    x.textAlign = 'center';
+    x.textBaseline = 'middle';
+    // emoji left
+    if (emoji) {
+        x.textAlign = 'left';
+        x.font = '40px sans-serif';
+        x.fillStyle = '#ffffff';
+        x.fillText(String(emoji).slice(0, 3), 22, H / 2);
+        x.textAlign = 'center';
+    }
+    let fs = 40;
+    x.font = `bold ${fs}px monospace, Consolas, "Courier New", sans-serif`;
+    const maxW = emoji ? W - 100 : W - 40;
+    while (x.measureText(label).width > maxW && fs > 14) {
+        fs -= 2;
+        x.font = `bold ${fs}px monospace, Consolas, "Courier New", sans-serif`;
+    }
+    // outline + fill
+    x.lineWidth = 5;
+    x.strokeStyle = '#000000';
+    x.strokeText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
+    x.fillStyle = neon;
+    x.shadowColor = neon;
+    x.shadowBlur = 10;
+    x.fillText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
+    x.shadowBlur = 0;
+    x.fillStyle = '#ffffff';
+    x.fillText(label, W / 2 + (emoji ? 12 : 0), H / 2, maxW);
+
+    const t = tex(c);
+    t.anisotropy = 4;
+    t.generateMipmaps = true;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.magFilter = THREE.LinearFilter;
+    t.needsUpdate = true;
+    return t;
+}
+
 export function signAtlas(signs) {
-    // signs: [{ id, text, color, emoji }]  — cells 512×128 on 4096×2048 (8×16)
+    // Keep for API compatibility — builds a real atlas AND returns uv map.
+    // Prefer makeSignPlate for guaranteed text; atlas still used if callers need one mesh.
     const COLS = 8, ROWS = 16, CW = 512, CH = 128;
     const [c, x] = canvas(COLS * CW, ROWS * CH);
-    x.clearRect(0, 0, c.width, c.height);
+    // Fill entire atlas dark so empty UV never reads as clear
+    x.fillStyle = '#0a101c';
+    x.fillRect(0, 0, c.width, c.height);
     const uv = new Map();
     signs.forEach((s, i) => {
         if (i >= COLS * ROWS) return;
         const col = i % COLS, row = Math.floor(i / COLS);
         const px = col * CW, py = row * CH;
         const neon = s.color || '#22d3ee';
-        const padX = 4, padY = 8;
-        const pw = CW - padX * 2, ph = CH - padY * 2;
+        let label = String(s.text || s.id || 'BUILDING').trim().toUpperCase() || 'BUILDING';
 
-        // solid opaque plate (alphaTest-friendly) — never transparent/empty
-        const plate = x.createLinearGradient(px, py, px, py + CH);
-        plate.addColorStop(0, '#121820');
-        plate.addColorStop(0.5, '#0a0e16');
-        plate.addColorStop(1, '#080c14');
-        x.fillStyle = plate;
-        roundRect(x, px + padX, py + padY, pw, ph, 7); x.fill();
-
-        // inner inset bevel
-        x.strokeStyle = 'rgba(255,255,255,0.08)';
-        x.lineWidth = 2;
-        roundRect(x, px + padX + 3, py + padY + 3, pw - 6, ph - 6, 5); x.stroke();
-        x.strokeStyle = 'rgba(0,0,0,0.45)';
-        x.lineWidth = 1.5;
-        roundRect(x, px + padX + 5, py + padY + 5, pw - 10, ph - 10, 4); x.stroke();
-
-        // neon border (outer)
-        x.strokeStyle = neon; x.lineWidth = 4.5;
-        x.shadowColor = neon; x.shadowBlur = 18;
-        roundRect(x, px + padX, py + padY, pw, ph, 7); x.stroke();
-        // second thinner pass for tube sharpness
+        x.fillStyle = '#111827';
+        x.fillRect(px + 4, py + 4, CW - 8, CH - 8);
+        x.strokeStyle = neon;
+        x.lineWidth = 5;
+        x.shadowColor = neon;
+        x.shadowBlur = 12;
+        x.strokeRect(px + 8, py + 8, CW - 16, CH - 16);
         x.shadowBlur = 0;
-        x.lineWidth = 1.5;
-        x.strokeStyle = '#ffffff';
-        x.globalAlpha = 0.35;
-        roundRect(x, px + padX + 1.5, py + padY + 1.5, pw - 3, ph - 3, 6); x.stroke();
-        x.globalAlpha = 1;
 
-        // emoji — system font fallbacks
-        x.textAlign = 'left'; x.textBaseline = 'middle';
-        const emoji = (s.emoji || '◆').toString().slice(0, 4);
-        x.font = '42px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif';
-        x.fillStyle = '#ffffff';
-        x.fillText(emoji, px + 22, py + CH / 2);
-
-        // name — always draw; high-contrast white with dark outline + soft neon halo
-        let label = (s.text || s.id || 'BUILDING').toString().trim().toUpperCase();
-        if (!label) label = 'BUILDING';
-        let fs = 38;
-        const maxW = CW - 128;
-        x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace`;
-        while (x.measureText(label).width > maxW && fs > 15) {
+        x.textAlign = 'center';
+        x.textBaseline = 'middle';
+        let fs = 36;
+        x.font = `bold ${fs}px monospace, Consolas, sans-serif`;
+        while (x.measureText(label).width > CW - 36 && fs > 12) {
             fs -= 2;
-            x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, "Courier New", monospace`;
+            x.font = `bold ${fs}px monospace, Consolas, sans-serif`;
         }
-        // if still too wide, truncate with ellipsis
-        if (x.measureText(label).width > maxW) {
-            while (label.length > 3 && x.measureText(label + '…').width > maxW) {
-                label = label.slice(0, -1);
-            }
-            label = label + '…';
-        }
-        const tx = px + 78, ty = py + CH / 2;
-        // dark outline for daylight readability
         x.lineWidth = 4;
-        x.strokeStyle = 'rgba(0,0,0,0.85)';
-        x.lineJoin = 'round';
-        x.strokeText(label, tx, ty, maxW);
-        // neon glow behind glyphs
+        x.strokeStyle = '#000';
+        x.strokeText(label, px + CW / 2, py + CH / 2, CW - 36);
         x.fillStyle = '#ffffff';
-        x.shadowColor = neon; x.shadowBlur = 14;
-        x.fillText(label, tx, ty, maxW);
+        x.shadowColor = neon;
+        x.shadowBlur = 8;
+        x.fillText(label, px + CW / 2, py + CH / 2, CW - 36);
         x.shadowBlur = 0;
-        // crisp white fill pass
-        x.fillStyle = '#f8fafc';
-        x.fillText(label, tx, ty, maxW);
 
-        // UV: Three.js CanvasTexture v=0 at bottom
         const u0 = px / c.width, u1 = (px + CW) / c.width;
         const v0 = 1 - (py + CH) / c.height, v1 = 1 - py / c.height;
         uv.set(s.id, { u0, v0, u1, v1 });
     });
     const t = tex(c);
     t.anisotropy = 8;
-    t.generateMipmaps = true;
-    t.minFilter = THREE.LinearMipmapLinearFilter;
-    t.magFilter = THREE.LinearFilter;
     t.needsUpdate = true;
     return { texture: t, uv };
 }

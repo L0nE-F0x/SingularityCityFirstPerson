@@ -957,55 +957,25 @@ export const World = {
     },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
-        // Bulletproof street signs: atlas texture ON the face plate (not a separate
-        // neon plane that can face the wrong way). Solid brand-colored "frame boxes"
-        // were reading as empty teal slabs when the text plane faced into the wall.
+        // Camera-facing sprites with a unique canvas texture each.
+        // Atlas + wall planes kept failing visually (blank teal slabs); sprites always show text.
         const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
             'monument', 'solar', 'wind', 'dam']);
-        const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
-            'graveyard', 'billboard', 'monument', 'arena', 'black_market',
-            'nuclear', 'coal', 'dish', 'metro']);
 
-        const signs = [];
-        for (const p of G.placements) {
-            const b = p.b;
-            if (!b || NO_SIGN.has(b.type)) continue;
-            const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
-                : b.type === 'black_market' ? '#f472b6'
-                : b.type === 'bar' ? '#e879f9'
-                : b.type === 'newspaper' ? '#fbbf24'
-                : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
-                : '#22d3ee';
-            let label = b.id === 'black_market' ? 'THE UNDERGROUND'
-                : String(b.name || b.id || 'BUILDING').toUpperCase();
-            if (!label.trim()) label = 'BUILDING';
-            signs.push({ id: b.id, text: label, emoji: b.emoji || '◆', color, p });
-        }
-        if (!signs.length) { this.signCount = 0; return; }
+        const group = new THREE.Group();
+        group.name = 'buildingSigns';
+        let count = 0;
 
-        const { texture, uv } = TEX.signAtlas(signs);
-        if (!texture) { this.signCount = 0; return; }
-
-        const plateGeos = [];
-        const bezelGeos = [];
-
-        // Decide facing: plaza/entrance buildings face district centre; towers face nearest road.
         const faceFor = (p) => {
             const b = p.b;
             const plazaTypes = new Set(['villa', 'housing', 'embassy', 'cabin', 'generic']);
             const dd = City.districts.find(x => x.id === p.district);
             const preferPlaza = plazaTypes.has(b.type) || (b.fl || 0) <= 4;
-
-            let nx = 0, nz = 1, ang = 0;
+            let nx = 0, nz = 1;
             if (preferPlaza && dd) {
                 const dx = dd.cx - p.x, dz = dd.cz - p.z;
-                if (Math.abs(dx) >= Math.abs(dz)) {
-                    nx = Math.sign(dx) || 1; nz = 0;
-                    ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
-                } else {
-                    nx = 0; nz = Math.sign(dz) || 1;
-                    ang = nz > 0 ? 0 : Math.PI;
-                }
+                if (Math.abs(dx) >= Math.abs(dz)) { nx = Math.sign(dx) || 1; nz = 0; }
+                else { nx = 0; nz = Math.sign(dz) || 1; }
             } else {
                 const axs = (City.avenueXs || []).concat(City.ringX || []);
                 const zss = (City.streetZs || []).concat(City.ringZ || []);
@@ -1019,102 +989,100 @@ export const World = {
                     const d = Math.abs(p.z - sz);
                     if (d < bestZd) { bestZd = d; bestSz = sz; }
                 }
-                if (bestAd <= bestZd) {
-                    nx = Math.sign(bestAx - p.x) || 1; nz = 0;
-                    ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
-                } else {
-                    nx = 0; nz = Math.sign(bestSz - p.z) || 1;
-                    ang = nz > 0 ? 0 : Math.PI;
-                }
+                if (bestAd <= bestZd) { nx = Math.sign(bestAx - p.x) || 1; nz = 0; }
+                else { nx = 0; nz = Math.sign(bestSz - p.z) || 1; }
             }
-            return { nx, nz, ang };
+            return { nx, nz };
         };
 
-        for (const s of signs) {
-            const r = uv.get(s.id);
-            if (!r) continue;
-            const p = s.p;
+        for (const p of G.placements) {
             const b = p.b;
-            const { nx, nz, ang } = faceFor(p);
-            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
+            if (!b || NO_SIGN.has(b.type)) continue;
 
+            const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
+                : b.type === 'black_market' ? '#f472b6'
+                : b.type === 'bar' ? '#e879f9'
+                : b.type === 'coal' || b.type === 'nuclear' ? '#fbbf24'
+                : b.type === 'newspaper' ? '#fbbf24'
+                : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
+                : '#22d3ee';
+            let label = b.id === 'black_market' ? 'THE UNDERGROUND'
+                : String(b.name || b.id || 'BUILDING').toUpperCase();
+            if (!label.trim()) label = 'BUILDING';
+
+            const { nx, nz } = faceFor(p);
+            const OPEN = new Set(['arena', 'black_market', 'nuclear', 'coal', 'dish', 'metro']);
+            const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            const sw = Math.min(Math.max(faceW * 0.55, 40), Math.min(faceW * 0.9, 110));
-            const sh = Math.max(14, sw / 3.8);
-
-            const gap = pylon ? 14 : 2.5;
-            const bx = p.x + nx * (halfOut + gap + 0.8);
-            const bz = p.z + nz * (halfOut + gap + 0.8);
+            const sw = Math.min(Math.max(faceW * 0.5, 52), Math.min(faceW * 0.9, 130));
+            const sh = Math.max(18, sw / 3.5);
+            const gap = pylon ? 20 : 8;
+            // hang out in front of facade so it never clips into the wall
+            const bx = p.x + nx * (halfOut + gap);
+            const bz = p.z + nz * (halfOut + gap);
             const mountY = pylon
-                ? 36
-                : Math.min(Math.max(FLOOR_H * 1.35, 28), Math.min((p.h || 48) * 0.42, 44));
+                ? 42
+                : Math.min(Math.max(FLOOR_H * 1.5, 34), Math.min((p.h || 48) * 0.45, 52));
 
-            // Textured plate = THE sign (atlas cell). DoubleSide so plaza + street both work.
-            const plate = new THREE.PlaneGeometry(sw, sh);
-            const uva = plate.attributes.uv;
-            for (let i = 0; i < uva.count; i++) {
-                uva.setXY(
-                    i,
-                    r.u0 + uva.getX(i) * (r.u1 - r.u0),
-                    r.v0 + uva.getY(i) * (r.v1 - r.v0)
-                );
+            let map;
+            try {
+                map = TEX.makeSignPlate(label, color, b.emoji || '');
+            } catch (e) {
+                console.warn('[signs] texture failed', b.id, e);
+                continue;
             }
-            plate.rotateY(ang);
-            plate.translate(bx, mountY, bz);
-            plateGeos.push(plate);
 
-            // Dark bezel slightly BIGGER and BEHIND the plate (never brand-cyan full slab)
-            const bezel = new THREE.BoxGeometry(sw + 4, sh + 4, 2.2);
-            bezel.rotateY(ang);
-            bezel.translate(bx - nx * 1.2, mountY, bz - nz * 1.2);
-            bezelGeos.push(paint(bezel, 0x0b0e14));
-
-            // Thin accent strip under the sign (small — not a second board)
-            const strip = new THREE.BoxGeometry(sw + 2, 1.6, 1.4);
-            strip.rotateY(ang);
-            strip.translate(bx - nx * 0.4, mountY - sh / 2 - 2.2, bz - nz * 0.4);
-            bezelGeos.push(paint(strip, new THREE.Color(s.color).getHex()));
-
-            if (pylon) {
-                for (const side of [-1, 1]) {
-                    const tx = -nz * side * (sw * 0.3);
-                    const tz = nx * side * (sw * 0.3);
-                    const postH = mountY - sh / 2;
-                    const post = new THREE.BoxGeometry(3.2, Math.max(8, postH), 3.2);
-                    post.translate(bx + tx - nx * 1.2, Math.max(4, postH / 2), bz + tz - nz * 1.2);
-                    bezelGeos.push(paint(post, 0x2a3038));
-                }
-            }
-        }
-
-        if (plateGeos.length) {
-            this.neonMat = new THREE.MeshBasicMaterial({
-                map: texture,
-                transparent: false,   // plate is opaque — always visible
-                alphaTest: 0,
-                side: THREE.DoubleSide,
-                depthWrite: true,
+            // Sprite always faces the camera — text is always readable
+            const mat = new THREE.SpriteMaterial({
+                map,
+                transparent: true,
+                depthTest: true,
+                depthWrite: false,
+                sizeAttenuation: true,
                 toneMapped: false
             });
-            const mesh = new THREE.Mesh(mergeGeometries(plateGeos, false), this.neonMat);
-            mesh.matrixAutoUpdate = false;
-            mesh.renderOrder = 2;
-            scene.add(mesh);
-            this.signMesh = mesh;
+            const spr = new THREE.Sprite(mat);
+            // world size ≈ sw x sh
+            spr.scale.set(sw, sh, 1);
+            spr.position.set(bx, mountY, bz);
+            spr.center.set(0.5, 0.5);
+            spr.renderOrder = 4;
+            group.add(spr);
+
+            // Dark plate behind sprite (gives thickness / post feel for pylons)
+            if (pylon) {
+                const postMat = new THREE.MeshStandardMaterial({ color: 0x1a1f28, metalness: 0.35, roughness: 0.55 });
+                for (const side of [-1, 1]) {
+                    const tx = -nz * side * (sw * 0.28);
+                    const tz = nx * side * (sw * 0.28);
+                    const postH = Math.max(14, mountY - 4);
+                    const post = new THREE.Mesh(new THREE.BoxGeometry(3.2, postH, 3.2), postMat);
+                    post.position.set(bx + tx, postH / 2, bz + tz);
+                    group.add(post);
+                }
+                const board = new THREE.Mesh(
+                    new THREE.BoxGeometry(sw * 0.95, sh * 0.95, 2),
+                    new THREE.MeshStandardMaterial({ color: 0x0a0e14, metalness: 0.3, roughness: 0.5 })
+                );
+                board.position.set(bx, mountY, bz);
+                // orient board roughly toward facade normal
+                board.rotation.y = Math.atan2(nx, nz);
+                group.add(board);
+            }
+
+            count++;
         }
-        if (bezelGeos.length) {
-            const structMesh = new THREE.Mesh(
-                mergeGeometries(bezelGeos, false),
-                new THREE.MeshStandardMaterial({
-                    vertexColors: true, metalness: 0.3, roughness: 0.55
-                })
-            );
-            structMesh.matrixAutoUpdate = false;
-            scene.add(structMesh);
+
+        scene.add(group);
+        this.signGroup = group;
+        this.signCount = count;
+        if (typeof console !== 'undefined') {
+            console.log('[SC-FP] building signs:', count);
         }
-        this.signCount = signs.length;
     },
+
+
 
 
     // ── PROPS: trees, lamps, benches, poles, containers, ships ───────────────
