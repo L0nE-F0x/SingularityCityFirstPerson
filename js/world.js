@@ -1375,19 +1375,23 @@ export const World = {
 
     // ── AI INDEX BILLBOARD PANEL ─────────────────────────────────────────────
     _buildBillboard(scene) {
+        // Posts only — the live display is Kardashev's grounded monument (js/kardashev.js).
+        // Previously this also spawned a free-floating plane that doubled the board
+        // and read as a second mid-air panel next to the visitor monument.
         const p = G.bldById['ai_index'];
         if (!p) return;
-        this.aiBoard = TEX.aiIndexBoard();
-        const panel = new THREE.Mesh(
-            new THREE.PlaneGeometry(92, 46),
-            new THREE.MeshBasicMaterial({ map: this.aiBoard.texture })
-        );
-        panel.position.set(p.worldX, 78, p.worldZ + 6);
-        scene.add(panel);
-        const back = new THREE.Mesh(paint(new THREE.BoxGeometry(96, 50, 3), 0x2a2e36), matVC());
-        back.position.set(p.worldX, 78, p.worldZ + 3);
-        scene.add(back);
-        G.colliders.push({ x0: p.worldX - 40, z0: p.worldZ - 6, x1: p.worldX + 40, z1: p.worldZ + 10, id: 'ai_index' });
+        this.aiBoard = TEX.aiIndexBoard(); // keep API for UI redraw hooks if any
+        // steel posts (specialty case also adds posts; harmless if both run)
+        const steel = new THREE.MeshStandardMaterial({ color: 0x6a7280, metalness: 0.5, roughness: 0.4 });
+        for (const ox of [-34, 34]) {
+            const post = new THREE.Mesh(new THREE.BoxGeometry(8, 90, 8), steel);
+            post.position.set(p.worldX + ox, 45, p.worldZ);
+            scene.add(post);
+        }
+        G.colliders.push({
+            x0: p.worldX - 40, z0: p.worldZ - 10,
+            x1: p.worldX + 40, z1: p.worldZ + 10, id: 'ai_index'
+        });
     },
 
     // ── DISTANT HILLS ────────────────────────────────────────────────────────
