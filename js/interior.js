@@ -203,16 +203,18 @@ export const Interior = {
         for (const [ix, iz] of panels) lit(120, 2, 70, ix * 175, ROOM_H - 3, iz * 140, th.lamp);
 
         this._dress(b, box, lit, th, accent, floorIdx);
-        this._enrichRoom(box, lit, th, accent);
+        if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent);
 
         // floor indicator plaque
         lit(60, 18, 2, 200, 50, -ROOM_D / 2 + WALL / 2 + 2, 0x111827);
         this._floorLabel = `F${floorIdx}${this.maxFloor ? '/' + this.maxFloor : ''}`;
 
-        const shell = new THREE.Mesh(mergeGeometries(parts, false),
-            new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0.04 }));
-        shell.matrixAutoUpdate = false;
-        this.group.add(shell);
+        if (parts.length) {
+            const shell = new THREE.Mesh(mergeGeometries(parts, false),
+                new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.88, metalness: 0.04 }));
+            shell.matrixAutoUpdate = false;
+            this.group.add(shell);
+        }
 
         if (glow.length) {
             const glowMesh = new THREE.Mesh(mergeGeometries(glow, false),
@@ -616,6 +618,47 @@ export const Interior = {
     },
 
     // ── enter / exit ─────────────────────────────────────────────────────────
+
+    /** Extra prop density — desks, plants, rugs, screens for every themed room. */
+    _enrichRoom(box, lit, th, accent) {
+        if (!this._propColliders) this._propColliders = [];
+        const solid = (x, z, w, d) => this._propColliders.push(
+            { x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
+        const acc = (accent && accent.getHex) ? accent.getHex() : 0x4a6fa5;
+        // corner columns
+        for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+            box(10, ROOM_H - 8, 10, sx * (ROOM_W / 2 - 24), ROOM_H / 2, sz * (ROOM_D / 2 - 24), th.wall);
+        }
+        // centre rug
+        box(200, 1.2, 140, 40, 0.8, 20, 0x3b4558);
+        // plants
+        for (const px of [-260, 260]) {
+            box(22, 18, 22, px, 9, 160, 0x4b5563); solid(px, 160, 22, 22);
+            box(18, 36, 18, px, 36, 160, 0x166534);
+        }
+        // wall sconces
+        for (const sx of [-1, 1]) lit(8, 6, 4, sx * 200, 55, -ROOM_D / 2 + 18, th.lamp);
+        // pendant lights
+        for (const px of [-100, 100]) {
+            box(2, 16, 2, px, ROOM_H - 18, 0, 0x64748b);
+            lit(18, 4, 18, px, ROOM_H - 10, 0, th.lamp);
+        }
+        // side console (skip heavy industrial themes)
+        if (!['robotics', 'datacenter', 'platform', 'warehouse', 'arena', 'gym'].includes(th.cat)) {
+            box(100, 28, 36, 200, 14, 20, 0x5c4033); solid(200, 20, 100, 36);
+            lit(40, 18, 1, 200, 32, 2, 0x1e293b);
+            box(16, 32, 16, 230, 16, 60, 0x374151);
+        }
+        // art frames on side wall
+        for (let i = 0; i < 3; i++) {
+            lit(28, 36, 1.5, ROOM_W / 2 - WALL / 2 - 4, 48, -80 + i * 70, acc);
+            box(32, 40, 2, ROOM_W / 2 - WALL / 2 - 5, 48, -80 + i * 70, 0x1e293b);
+        }
+        // bin + water cooler near door
+        box(12, 16, 12, 80, 8, ROOM_D / 2 - 50, 0x475569);
+        box(14, 40, 14, -80, 20, ROOM_D / 2 - 55, 0xcbd5e1); solid(-80, ROOM_D / 2 - 55, 14, 14);
+        lit(10, 8, 10, -80, 42, ROOM_D / 2 - 55, 0x7dd3fc);
+    },
     canEnter(b) {
         if (!b) return false;
         // Outdoor-only props stay blocked; launchpads use mission/space interiors (2D parity).
@@ -651,8 +694,15 @@ export const Interior = {
 
     enter(b) {
         if (this.building || !this.canEnter(b)) return;
-        this._build(b, 0);
         this.building = b;
+        try {
+            this._build(b, 0);
+        } catch (err) {
+            console.error('[Interior] build failed', b?.id, err);
+            this.building = null;
+            G.ui?.addToast?.('Could not enter building — try another', 'warn');
+            return;
+        }
         this.group.visible = true;
         if (this._fillLight) { this._fillLight.visible = true; this._fillLight.intensity = 0.85; }
 
@@ -661,6 +711,7 @@ export const Interior = {
         for (const o of G.scene.children) {
             if (o === this.group || !o.visible) continue;
             if (o.isLight) continue;
+            // keep cabin / weather dome? city meshes only
             o.visible = false;
             this._cityHidden.push(o);
         }
@@ -668,16 +719,16 @@ export const Interior = {
         this._savedColliders = G.colliders;
         this._savedPos = G.camera.position.clone();
         this._savedYaw = G.player.yaw;
-        G.colliders = this._colliders.map(c => ({
+        G.colliders = (this._colliders || []).map(c => ({
             x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1
         }));
         G.floorY = FLOOR_Y;
         G.inside = b;
-        G.player.teleport(0, ROOM_D / 2 - 70, 0);   // just inside the door, facing the room
+        G.player.teleport(0, ROOM_D / 2 - 70, 0);
         const multi = this.maxFloor > 0 ? ` · ELEVATOR: F / E at lift / 0–${this.maxFloor}` : '';
-        G.ui.banner(`${b.emoji || '🏢'} ${b.name}`, 'press E at the door to leave' + multi);
-        G.audio?.sfx('open');
-        G.progress?.unlock('went_inside');
+        G.ui?.banner?.(`${b.emoji || '🏢'} ${b.name}`, 'press E at the door to leave' + multi);
+        G.audio?.sfx?.('open');
+        G.progress?.unlock?.('went_inside');
     },
 
     exit() {

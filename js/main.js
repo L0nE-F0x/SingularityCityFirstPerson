@@ -1,4 +1,4 @@
-﻿/* ══════════════════════════════════════════════════════════════════════════
+/* ══════════════════════════════════════════════════════════════════════════
    SINGULARITY CITY — FIRST PERSON · main entry
    Boot: data → layout → renderer → world → systems → loop.
    Performance posture (from the 3D-version autopsy): no shadow maps, no
@@ -169,7 +169,9 @@ async function boot() {
         Audio.init();
         UI.startHUD();
         UI.setWeather(Weather._label());
-        Player.lock();
+        // Pointer lock needs a user gesture (autostart / from=pixi has none)
+        if (startGame._gesture) Player.lock();
+        else setTimeout(() => UI.addToast?.('Click the city to look around', 'info'), 500);
         Progress.unlock('first_steps');
         setTimeout(() => UI.addToast('Tip: press <b>ESC</b> to free the mouse, or <b>P</b> for 2D City', 'info'), 2500);
         UI.banner('🏙️ SINGULARITY CITY', 'the entire AI industry, alive around you');
@@ -181,11 +183,12 @@ async function boot() {
             location.reload();
             return;
         }
+        startGame._gesture = true;
         startGame();
     });
     // ?autostart=1 — skip the start screen (embeds, kiosks, headless testing)
     const params = new URLSearchParams(location.search);
-    if (params.get('autostart') === '1') startGame();
+    if (params.get('autostart') === '1') { startGame._gesture = false; startGame(); }
     // dev/test params: ?dp=0.5 freeze time of day · ?x= &z= &yaw= teleport
     if (params.get('dp') !== null) G.fixedPhase = parseFloat(params.get('dp'));
     if (params.get('x') !== null && params.get('z') !== null) {

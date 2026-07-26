@@ -57,12 +57,24 @@ export const Player = {
     },
 
     lock() {
-        if (document.pointerLockElement === G.canvas) return;
-        try {
-            const p = G.canvas.requestPointerLock({ unadjustedMovement: true });
-            if (p && p.catch) p.catch(() => { try { G.canvas.requestPointerLock(); } catch (e) { /* denied */ } });
-        } catch (e) {
-            try { G.canvas.requestPointerLock(); } catch (e2) { /* denied */ }
+        if (!G.canvas || document.pointerLockElement === G.canvas) return;
+        const tryLock = (opts) => {
+            try {
+                const p = opts
+                    ? G.canvas.requestPointerLock(opts)
+                    : G.canvas.requestPointerLock();
+                // Always swallow promise rejection (autostart / no user gesture)
+                if (p && typeof p.then === 'function') {
+                    p.then(() => {}).catch(() => {});
+                }
+                return p;
+            } catch (_) {
+                return null;
+            }
+        };
+        const p = tryLock({ unadjustedMovement: true });
+        if (p && typeof p.then === 'function') {
+            p.catch(() => { tryLock(); });
         }
     },
     unlock() { if (document.pointerLockElement) document.exitPointerLock(); },
