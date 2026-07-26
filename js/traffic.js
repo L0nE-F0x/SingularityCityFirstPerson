@@ -18,46 +18,59 @@ function paint(geo, hex) {
 }
 
 /** Shared materials for glass (see-through to show occupants). */
-function glassMat(opacity = 0.22) {
+function glassMat(opacity = 0.18) {
     return new THREE.MeshStandardMaterial({
-        color: 0xa8c8e8,
-        metalness: 0.15,
-        roughness: 0.08,
-        transparent: true,
-        opacity,
-        depthWrite: false,
-        side: THREE.DoubleSide
+        color: 0xb8dcf5, metalness: 0.15, roughness: 0.06,
+        transparent: true, opacity: Math.min(0.32, Math.max(0.12, opacity)),
+        depthWrite: false, side: THREE.DoubleSide
     });
 }
 
-/** Build a readable sedan. Forward = +X. */
+/** Build a readable sedan. Forward = +X. Cabin is OPEN (pillars + roof) so glass shows occupants. */
 function buildSedan(bodyHex, opts = {}) {
     const g = new THREE.Group();
     const paintM = new THREE.MeshStandardMaterial({
         color: bodyHex, roughness: 0.32, metalness: 0.55
     });
-    const darkM = new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.6, metalness: 0.3 });
     const chromeM = new THREE.MeshStandardMaterial({ color: 0xc0c8d0, roughness: 0.25, metalness: 0.85 });
     const tireM = new THREE.MeshStandardMaterial({ color: 0x111418, roughness: 0.9, metalness: 0.1 });
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x151820, roughness: 0.7, metalness: 0.2 });
 
     // chassis / lower body
     const body = new THREE.Mesh(new THREE.BoxGeometry(48, 10, 20), paintM);
     body.position.set(0, 9, 0);
-    // cabin
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(22, 9, 18), paintM);
-    cabin.position.set(-3, 18.5, 0);
-    // nose taper
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(10, 7, 18), paintM);
-    nose.position.set(22, 8.5, 0);
-    // clear glass panes (not filled boxes) — windows as thin planes you look through
-    const gw = glassMat(opts.glassOpacity ?? 0.28);
-    const wind = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), gw);
-    wind.position.set(8.2, 18.5, 0); wind.rotation.y = Math.PI / 2;
-    const rear = new THREE.Mesh(new THREE.PlaneGeometry(14, 6.5), gw);
-    rear.position.set(-14.2, 18.5, 0); rear.rotation.y = -Math.PI / 2;
-    const sideL = new THREE.Mesh(new THREE.PlaneGeometry(18, 6.5), gw);
-    sideL.position.set(-2, 18.8, 9.2);
-    const sideR = sideL.clone(); sideR.position.z = -9.2; sideR.rotation.y = Math.PI;
+    // hood + boot (not a solid cabin block)
+    const hood = new THREE.Mesh(new THREE.BoxGeometry(14, 4, 18), paintM);
+    hood.position.set(14, 14.5, 0);
+    const boot = new THREE.Mesh(new THREE.BoxGeometry(12, 4, 18), paintM);
+    boot.position.set(-16, 14.5, 0);
+    // roof slab only
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(22, 2.2, 17), paintM);
+    roof.position.set(-2, 23.5, 0);
+    // A/B/C pillars (thin) — leave sides open for glass
+    for (const [px, pz] of [[8, 8.5], [8, -8.5], [-12, 8.5], [-12, -8.5]]) {
+        const pillar = new THREE.Mesh(new THREE.BoxGeometry(2.2, 9, 1.6), paintM);
+        pillar.position.set(px, 18.5, pz);
+        g.add(pillar);
+    }
+    // beltline
+    const belt = new THREE.Mesh(new THREE.BoxGeometry(24, 1.5, 20.5), paintM);
+    belt.position.set(-2, 14.2, 0);
+
+    // REAL glass — MeshPhysical-ish via Standard + low opacity, seats visible through
+    const gw = glassMat(opts.glassOpacity ?? 0.18);
+    const wind = new THREE.Mesh(new THREE.PlaneGeometry(16, 8), gw);
+    wind.position.set(9.5, 18.8, 0); wind.rotation.y = Math.PI / 2;
+    const rear = new THREE.Mesh(new THREE.PlaneGeometry(16, 7.5), gw);
+    rear.position.set(-13.5, 18.8, 0); rear.rotation.y = -Math.PI / 2;
+    const sideL = new THREE.Mesh(new THREE.PlaneGeometry(20, 7.5), gw);
+    sideL.position.set(-2, 18.8, 9.6);
+    const sideR = new THREE.Mesh(new THREE.PlaneGeometry(20, 7.5), gw);
+    sideR.position.set(-2, 18.8, -9.6); sideR.rotation.y = Math.PI;
+
+    // interior seat bench (visible through glass)
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(14, 5, 14), darkM);
+    seat.position.set(-4, 13.5, 0);
 
     // wheels
     const wheels = new THREE.Group();
@@ -70,7 +83,6 @@ function buildSedan(bodyHex, opts = {}) {
         hub.position.set(dx, 5.5, dz);
         wheels.add(tire, hub);
     }
-    // lights
     const lampM = new THREE.MeshBasicMaterial({ color: 0xfff2cc });
     const tailM = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
     for (const s of [-1, 1]) {
@@ -79,11 +91,10 @@ function buildSedan(bodyHex, opts = {}) {
         const t = new THREE.Mesh(new THREE.BoxGeometry(2, 2.5, 3.5), tailM);
         t.position.set(-25, 10, s * 6.5); g.add(t);
     }
-    // bumpers
     const fb = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 19), chromeM); fb.position.set(25.5, 6.5, 0);
     const rb = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 19), chromeM); rb.position.set(-25.5, 6.5, 0);
 
-    g.add(body, cabin, nose, wind, rear, sideL, sideR, wheels, fb, rb);
+    g.add(body, hood, boot, roof, belt, wind, rear, sideL, sideR, seat, wheels, fb, rb);
     g.userData.paintM = paintM;
     return g;
 }

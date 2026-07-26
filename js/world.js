@@ -143,6 +143,7 @@ export const World = {
 
         this._buildGround(scene);
         this._buildBuildings(scene);
+        this._buildStreetGlass(scene);
         this._buildSigns(scene);
         this._buildProps(scene);
         this._buildWater(scene);
@@ -765,6 +766,50 @@ export const World = {
         }
     },
 
+
+    /** Real transparent shopfront glass on street faces (see-through ground floor). */
+    _buildStreetGlass(scene) {
+        const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
+            'graveyard', 'billboard', 'monument', 'arena', 'black_market',
+            'nuclear', 'coal', 'dish', 'metro']);
+        const geos = [];
+        const glassMat = new THREE.MeshStandardMaterial({
+            color: 0x8ec8e8, metalness: 0.2, roughness: 0.12,
+            transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide
+        });
+        for (const p of G.placements) {
+            if (OPEN.has(p.b.type)) continue;
+            if ((p.h || 0) < FLOOR_H * 1.5) continue;
+            // four street faces: quads slightly proud of wall
+            const faces = [
+                { nx: 1, nz: 0, ang: Math.PI / 2, half: p.w / 2, span: p.d },
+                { nx: -1, nz: 0, ang: -Math.PI / 2, half: p.w / 2, span: p.d },
+                { nx: 0, nz: 1, ang: 0, half: p.d / 2, span: p.w },
+                { nx: 0, nz: -1, ang: Math.PI, half: p.d / 2, span: p.w }
+            ];
+            for (const f of faces) {
+                // only faces near a road
+                const wx = p.x + f.nx * (f.half + 1.5);
+                const wz = p.z + f.nz * (f.half + 1.5);
+                let nearRoad = false;
+                for (const ax of (City.avenueXs || [])) if (Math.abs(wx - ax) < 90) nearRoad = true;
+                for (const sz of (City.streetZs || [])) if (Math.abs(wz - sz) < 90) nearRoad = true;
+                if (!nearRoad) continue;
+                const gw = Math.min(f.span * 0.72, 120);
+                const gh = Math.min(FLOOR_H * 1.1, 26);
+                const g = new THREE.PlaneGeometry(gw, gh);
+                g.rotateY(f.ang);
+                g.translate(wx, gh * 0.55 + 2, wz);
+                geos.push(g);
+            }
+        }
+        if (!geos.length) return;
+        const mesh = new THREE.Mesh(mergeGeometries(geos, false), glassMat);
+        mesh.matrixAutoUpdate = false;
+        mesh.renderOrder = 2;
+        scene.add(mesh);
+        this.streetGlass = mesh;
+    },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
         // Mount signs FLUSH on the street-facing facade (cardinal axis only).
@@ -802,19 +847,34 @@ export const World = {
             const b = p.b;
             const pylon = OPEN.has(b.type) || (p.h || 0) < FLOOR_H * 2.2;
 
-            // Cardinal face toward district centre (street), never a diagonal
-            const dd = City.districts.find(x => x.id === p.district);
-            const dx = dd ? (dd.cx - p.x) : 0;
-            const dz = dd ? (dd.cz - p.z) : 1;
+            // Face the NEAREST road (avenue X or street Z), outward so pedestrians
+            // on the street can read the sign — not toward district centre (that
+            // put text on the courtyard side / wrong FrontSide).
             let nx = 0, nz = 0, ang = 0;
-            if (Math.abs(dx) >= Math.abs(dz)) {
-                nx = Math.sign(dx) || 1;
-                nz = 0;
-                ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
-            } else {
-                nx = 0;
-                nz = Math.sign(dz) || 1;
-                ang = nz > 0 ? 0 : Math.PI;
+            {
+                const axs = (City.avenueXs || []).concat(City.ringX || []);
+                const zss = (City.streetZs || []).concat(City.ringZ || []);
+                let bestAx = axs[0] ?? 0, bestAd = Infinity;
+                for (const ax of axs) {
+                    const d = Math.abs(p.x - ax);
+                    if (d < bestAd) { bestAd = d; bestAx = ax; }
+                }
+                let bestSz = zss[0] ?? 0, bestZd = Infinity;
+                for (const sz of zss) {
+                    const d = Math.abs(p.z - sz);
+                    if (d < bestZd) { bestZd = d; bestSz = sz; }
+                }
+                if (bestAd <= bestZd) {
+                    // nearest is an avenue running N-S → face ±X toward it
+                    nx = Math.sign(bestAx - p.x) || 1;
+                    nz = 0;
+                    ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+                } else {
+                    // nearest is a street running E-W → face ±Z toward it
+                    nx = 0;
+                    nz = Math.sign(bestSz - p.z) || 1;
+                    ang = nz > 0 ? 0 : Math.PI;
+                }
             }
 
             // Face width of the wall we mount on (not max extent — avoids overshoot)
@@ -864,14 +924,13 @@ export const World = {
                 }
             }
 
-            // Neon only on the street face (no back twin — backs were empty
-            // black boards that read as clipped double signs through walls).
-            const g = new THREE.PlaneGeometry(sw, sh);
+            // Neon plate sits just outside housing so it never z-fights / hides inside
+            const g = new THREE.PlaneGeometry(sw * 0.96, sh * 0.9);
             const a = g.attributes.uv;
             for (let i = 0; i < a.count; i++) {
                 a.setXY(i, r.u0 + a.getX(i) * (r.u1 - r.u0), r.v0 + a.getY(i) * (r.v1 - r.v0));
             }
-            const neonPush = boardDepth / 2 + 0.35;
+            const neonPush = boardDepth / 2 + 1.2;
             g.rotateY(ang);
             g.translate(bx + nx * neonPush, mountY, bz + nz * neonPush);
             neonGeos.push(g);
@@ -879,8 +938,12 @@ export const World = {
 
         if (neonGeos.length) {
             this.neonMat = new THREE.MeshBasicMaterial({
-                map: texture, transparent: true, alphaTest: 0.08,
-                side: THREE.FrontSide, depthWrite: false
+                map: texture,
+                transparent: true,
+                alphaTest: 0.02,
+                side: THREE.DoubleSide,
+                depthWrite: false,
+                toneMapped: false
             });
             const mesh = new THREE.Mesh(mergeGeometries(neonGeos, false), this.neonMat);
             mesh.matrixAutoUpdate = false;

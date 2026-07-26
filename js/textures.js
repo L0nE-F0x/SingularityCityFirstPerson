@@ -137,41 +137,49 @@ export function facade(floors, opts = {}) {
 // ─── Neon sign atlas ─────────────────────────────────────────────────────────
 // All building signs on ONE 2048² texture → merged quads → 1 draw call.
 export function signAtlas(signs) {
-    // signs: [{ id, text, color }]  →  cells of 512×128 on a 4096×2048 canvas (8×16 = 128 cells)
+    // signs: [{ id, text, color }]  — cells 512x128 on 4096x2048 (8x16)
     const COLS = 8, ROWS = 16, CW = 512, CH = 128;
     const [c, x] = canvas(COLS * CW, ROWS * CH);
-    x.fillStyle = 'rgba(0,0,0,0)'; x.clearRect(0, 0, c.width, c.height);
+    x.clearRect(0, 0, c.width, c.height);
     const uv = new Map();
     signs.forEach((s, i) => {
+        if (i >= COLS * ROWS) return;
         const col = i % COLS, row = Math.floor(i / COLS);
         const px = col * CW, py = row * CH;
-        // plate
-        x.fillStyle = 'rgba(8,10,18,0.92)';
-        roundRect(x, px + 8, py + 22, CW - 16, CH - 44, 10); x.fill();
+        // solid opaque plate (alphaTest-friendly)
+        x.fillStyle = '#0a0e18';
+        roundRect(x, px + 6, py + 18, CW - 12, CH - 36, 8); x.fill();
         // neon border
-        x.strokeStyle = s.color || '#22d3ee'; x.lineWidth = 4;
-        x.shadowColor = s.color || '#22d3ee'; x.shadowBlur = 18;
-        roundRect(x, px + 8, py + 22, CW - 16, CH - 44, 10); x.stroke();
+        const neon = s.color || '#22d3ee';
+        x.strokeStyle = neon; x.lineWidth = 5;
+        x.shadowColor = neon; x.shadowBlur = 16;
+        roundRect(x, px + 6, py + 18, CW - 12, CH - 36, 8); x.stroke();
         x.shadowBlur = 0;
-        // emoji
-        x.font = '44px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
-        x.fillText(s.emoji || '🏢', px + 26, py + CH / 2 + 2);
-        // name (shrink to fit)
-        let fs = 34;
-        x.font = `bold ${fs}px Silkscreen, monospace`;
-        while (x.measureText(s.text).width > CW - 120 && fs > 14) {
-            fs -= 2; x.font = `bold ${fs}px Silkscreen, monospace`;
-        }
+        // emoji — system font fallbacks (Silkscreen often missing at atlas build)
+        x.textAlign = 'left'; x.textBaseline = 'middle';
+        x.font = '40px "Segoe UI Emoji","Apple Color Emoji",sans-serif';
         x.fillStyle = '#ffffff';
-        x.shadowColor = s.color || '#22d3ee'; x.shadowBlur = 10;
-        x.fillText(s.text, px + 84, py + CH / 2 + 2, CW - 110);
+        x.fillText((s.emoji || '◆').toString().slice(0, 4), px + 22, py + CH / 2);
+        // name — always draw with available fonts, high contrast
+        const label = (s.text || s.id || '?').toString();
+        let fs = 36;
+        x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+        while (x.measureText(label).width > CW - 130 && fs > 16) {
+            fs -= 2;
+            x.font = `bold ${fs}px ui-monospace, "Cascadia Mono", Consolas, monospace`;
+        }
+        x.fillStyle = '#f8fafc';
+        x.shadowColor = neon; x.shadowBlur = 12;
+        x.fillText(label, px + 78, py + CH / 2, CW - 100);
         x.shadowBlur = 0;
-        const u0 = px / c.width, v0 = 1 - (py + CH) / c.height;
-        const u1 = (px + CW) / c.width, v1 = 1 - py / c.height;
+        // UV: Three.js CanvasTexture v=0 at bottom
+        const u0 = px / c.width, u1 = (px + CW) / c.width;
+        const v0 = 1 - (py + CH) / c.height, v1 = 1 - py / c.height;
         uv.set(s.id, { u0, v0, u1, v1 });
     });
     const t = tex(c);
     t.anisotropy = 8;
+    t.needsUpdate = true;
     return { texture: t, uv };
 }
 
