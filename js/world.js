@@ -1069,9 +1069,8 @@ export const World = {
     },
     // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
     _buildSigns(scene) {
-        // Mesh planes + unique canvas map each. Updated with lookAt(camera) every frame
-        // so text stays readable. No sprites (SpriteMaterial + canvas was rendering as
-        // solid brand-colour slabs with no visible glyphs on some GPU/browser combos).
+        // Fixed facade signs — NO camera lookAt (that made boards float and spin in the street).
+        // Each building gets a plate flush on the street-facing wall.
         const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
             'monument', 'solar', 'wind', 'dam']);
 
@@ -1080,33 +1079,32 @@ export const World = {
         group.name = 'buildingSigns';
         let count = 0;
 
+        // Always face the nearest road (outward), never district centre (that stuck
+        // opposite embassies into the middle of the carriageway).
         const faceFor = (p) => {
-            const b = p.b;
-            const plazaTypes = new Set(['villa', 'housing', 'embassy', 'cabin', 'generic']);
-            const dd = City.districts.find(x => x.id === p.district);
-            const preferPlaza = plazaTypes.has(b.type) || (b.fl || 0) <= 4;
-            let nx = 0, nz = 1;
-            if (preferPlaza && dd) {
-                const dx = dd.cx - p.x, dz = dd.cz - p.z;
-                if (Math.abs(dx) >= Math.abs(dz)) { nx = Math.sign(dx) || 1; nz = 0; }
-                else { nx = 0; nz = Math.sign(dz) || 1; }
-            } else {
-                const axs = (City.avenueXs || []).concat(City.ringX || []);
-                const zss = (City.streetZs || []).concat(City.ringZ || []);
-                let bestAx = axs[0] ?? 0, bestAd = Infinity;
-                for (const ax of axs) {
-                    const d = Math.abs(p.x - ax);
-                    if (d < bestAd) { bestAd = d; bestAx = ax; }
-                }
-                let bestSz = zss[0] ?? 0, bestZd = Infinity;
-                for (const sz of zss) {
-                    const d = Math.abs(p.z - sz);
-                    if (d < bestZd) { bestZd = d; bestSz = sz; }
-                }
-                if (bestAd <= bestZd) { nx = Math.sign(bestAx - p.x) || 1; nz = 0; }
-                else { nx = 0; nz = Math.sign(bestSz - p.z) || 1; }
+            const axs = (City.avenueXs || []).concat(City.ringX || []);
+            const zss = (City.streetZs || []).concat(City.ringZ || []);
+            let bestAx = axs[0] ?? 0, bestAd = Infinity;
+            for (const ax of axs) {
+                const d = Math.abs(p.x - ax);
+                if (d < bestAd) { bestAd = d; bestAx = ax; }
             }
-            return { nx, nz };
+            let bestSz = zss[0] ?? 0, bestZd = Infinity;
+            for (const sz of zss) {
+                const d = Math.abs(p.z - sz);
+                if (d < bestZd) { bestZd = d; bestSz = sz; }
+            }
+            let nx = 0, nz = 0, ang = 0;
+            if (bestAd <= bestZd) {
+                nx = Math.sign(bestAx - p.x) || 1;
+                nz = 0;
+                ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
+            } else {
+                nx = 0;
+                nz = Math.sign(bestSz - p.z) || 1;
+                ang = nz > 0 ? 0 : Math.PI;
+            }
+            return { nx, nz, ang };
         };
 
         for (const p of G.placements) {
@@ -1123,18 +1121,18 @@ export const World = {
             const label = b.id === 'black_market' ? 'THE UNDERGROUND'
                 : String(b.name || b.id || 'BUILDING');
 
-            const { nx, nz } = faceFor(p);
+            const { nx, nz, ang } = faceFor(p);
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            const sw = Math.min(Math.max(faceW * 0.52, 56), Math.min(faceW * 0.88, 140));
-            const sh = Math.max(20, sw / 3.4);
-            // well clear of facade / glass
-            const gap = 14;
-            const bx = p.x + nx * (halfOut + gap);
-            const bz = p.z + nz * (halfOut + gap);
+            // Modest size — hung on the wall, not a highway gantry
+            const sw = Math.min(Math.max(faceW * 0.42, 40), Math.min(faceW * 0.75, 88));
+            const sh = Math.max(14, Math.min(sw / 3.8, 24));
+            const gap = 2.8; // almost flush
+            const bx = p.x + nx * (halfOut + gap + 0.6);
+            const bz = p.z + nz * (halfOut + gap + 0.6);
             const mountY = Math.min(
-                Math.max(FLOOR_H * 1.55, 36),
-                Math.min((p.h || 48) * 0.48, 56)
+                Math.max(FLOOR_H * 1.25, 28),
+                Math.min((p.h || 40) * 0.38, 42)
             );
 
             let map;
@@ -1146,34 +1144,46 @@ export const World = {
                 continue;
             }
 
-            // Dark backer (thin box behind the text plane)
-            const back = new THREE.Mesh(
-                new THREE.BoxGeometry(sw + 2, sh + 2, 2.5),
-                new THREE.MeshStandardMaterial({ color: 0x0a0e14, metalness: 0.25, roughness: 0.55 })
+            // Housing box flush on wall (dark, not brand-colour)
+            const housing = new THREE.Mesh(
+                new THREE.BoxGeometry(sw + 3, sh + 3, 3),
+                new THREE.MeshStandardMaterial({ color: 0x0c1018, metalness: 0.3, roughness: 0.55 })
             );
-            back.position.set(bx - nx * 1.4, mountY, bz - nz * 1.4);
-            // face outward
-            back.lookAt(bx + nx * 10, mountY, bz + nz * 10);
-            group.add(back);
+            housing.position.set(bx - nx * 0.5, mountY, bz - nz * 0.5);
+            housing.rotation.y = ang;
+            group.add(housing);
 
-            // Textured plate — MeshBasic (unlit), pure white * map
+            // Thin accent bar under sign
+            const bar = new THREE.Mesh(
+                new THREE.BoxGeometry(sw + 3, 1.4, 2.2),
+                new THREE.MeshStandardMaterial({
+                    color: new THREE.Color(color),
+                    metalness: 0.2,
+                    roughness: 0.45,
+                    emissive: new THREE.Color(color),
+                    emissiveIntensity: 0.25
+                })
+            );
+            bar.position.set(bx - nx * 0.3, mountY - sh / 2 - 2, bz - nz * 0.3);
+            bar.rotation.y = ang;
+            group.add(bar);
+
+            // Text plate fixed to facade (FrontSide outward only)
             const mat = new THREE.MeshBasicMaterial({
                 map,
                 color: 0xffffff,
-                side: THREE.DoubleSide,
+                side: THREE.FrontSide,
                 toneMapped: false,
                 transparent: false,
                 depthWrite: true,
-                depthTest: true,
                 fog: false
             });
             const plate = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
-            plate.position.set(bx, mountY, bz);
-            plate.lookAt(bx + nx * 10, mountY, bz + nz * 10);
-            plate.userData.isSign = true;
-            plate.renderOrder = 3;
+            // sit just outside housing front
+            plate.position.set(bx + nx * 1.1, mountY, bz + nz * 1.1);
+            plate.rotation.y = ang;
+            plate.renderOrder = 2;
             group.add(plate);
-            this.signMeshes.push(plate);
 
             count++;
         }
@@ -1181,8 +1191,9 @@ export const World = {
         scene.add(group);
         this.signGroup = group;
         this.signCount = count;
-        console.log('[SC-FP] building signs (mesh):', count);
+        console.log('[SC-FP] building signs (fixed facade):', count);
     },
+
 
 
 
@@ -1536,13 +1547,6 @@ export const World = {
         if (this.waterTex) {
             this.waterTex.offset.x = t * 0.008;
             this.waterTex.offset.y = Math.sin(t * 0.1) * 0.03;
-        }
-        // Keep sign plates facing the player (yaw only) so labels stay readable
-        if (this.signMeshes?.length && G.camera) {
-            const cx = G.camera.position.x, cz = G.camera.position.z;
-            for (const m of this.signMeshes) {
-                m.lookAt(cx, m.position.y, cz);
-            }
         }
     }
 };
