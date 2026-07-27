@@ -6,7 +6,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, EYE_H } from './state.js';
-import { LABS, SEED, ROSTER, FOUNDERS, STAGES, ACTS, getStage, getAct, getFounderAct, LAB_HQ } from './data.js';
+import { LABS, SEED, ROSTER, FOUNDERS, WORKERS, STAGES, ACTS, getStage, getAct, getFounderAct, LAB_HQ } from './data.js';
 import { City, KERB_H } from './city.js';
 
 /* Goal-driven archetypes (ported from the 2D app): ~20% of citizens have a
@@ -172,7 +172,9 @@ function applyWalkShader(mat) {
     return mat;
 }
 
-const INDOOR_ACTS = new Set(['work', 'sleep', 'train']);
+// 'jailed' belongs here too — a detainee standing on the pavement outside the
+// detention centre rather than inside it is the whole tell.
+const INDOOR_ACTS = new Set(['work', 'sleep', 'train', 'jailed']);
 
 export const Citizens = {
     list: [],
@@ -191,6 +193,21 @@ export const Citizens = {
         for (const r of ROSTER) roster.push({ model: { id: 'r_' + r.name, name: r.name, lab: r.lab, os: r.os, phase: 'released', rel: '2024-01-01' }, named: false });
         // Founders
         for (const f of FOUNDERS) roster.push({ model: { id: 'f_' + f.name, name: f.name, lab: f.lab, os: false, phase: 'released', rel: '2020-01-01', founder: f }, named: true });
+        /* Worker NPCs — the people who actually run the infrastructure. The 2D
+           city has a named NOC Lead, SRE, Litho Tech, Power Eng and so on
+           commuting between the worker blocks and their facility on day/night
+           shifts; FP populated only AI models, which is why the Compute, Port
+           and Power districts read as deserted machinery. They are ordinary
+           citizens with a fixed workplace and a shift instead of a lab. */
+        for (const w of WORKERS) {
+            roster.push({
+                model: {
+                    id: w.id, name: w.name, lab: 'other', os: false,
+                    phase: 'released', rel: '2020-01-01', worker: w
+                },
+                named: true
+            });
+        }
         // Generated fillers
         const labKeys = Object.keys(LABS);
         let gi = 0;
@@ -265,6 +282,10 @@ export const Citizens = {
        and findable except while sleeping. ~8% residual keeps sidewalks alive. */
     _shouldBeIndoors(c) {
         if (c.model.founder) return c.act === 'sleep';
+        // Facility staff work the yard, the dock and the switchyard, not just a
+        // desk — keeping nearly half of them outdoors on shift is the whole
+        // reason the industrial districts stop looking abandoned.
+        if (c.model.worker) return c.act === 'sleep' || c.seed > 0.55;
         if (c.seed <= 0.08) return false;
         // commute counts once they've arrived (callers gate on path-empty)
         return INDOOR_ACTS.has(c.act) || c.act === 'commute';
@@ -339,9 +360,53 @@ export const Citizens = {
         return (85 + Math.random() * 40) * mult;
     },
 
+    /* Where a worker NPC's `workplace` key actually stands in the world.
+       Several keys name a *class* of facility rather than one building (six
+       people work at "dc"), so they are spread deterministically across every
+       matching building — otherwise all six stand on one datacentre doormat. */
+    _workerVenue(c) {
+        const key = c.model.worker.workplace;
+        if (G.bldById[key]) return key;                 // already a building id
+        if (!this._workPools) {
+            const pool = (pred) => G.placements.filter(p => pred(p.b)).map(p => p.b.id);
+            this._workPools = {
+                dc: pool(b => b.type === 'datacenter'),
+                fab: pool(b => b.type === 'fab'),
+                hq: pool(b => b.type === 'hq'),
+                vcrow: pool(b => /^vcrow_/.test(b.id)),
+                space: pool(b => b.type === 'launchpad' || /^(mission_control|space_assembly|tracking_station)$/.test(b.id)),
+                university: pool(b => /^uni_/.test(b.id)),
+                court: pool(b => /^court_/.test(b.id)),
+                museum: ['bld_1'],
+                social: ['cafe', 'neon_bar'],
+                forest: ['pine_reserve', 'silicon_woods', 'forest_1']
+            };
+        }
+        const pool = (this._workPools[key] || []).filter(id => G.bldById[id]);
+        if (!pool.length) return LAB_HQ[c.lab] || 'open_square';
+        return pool[(c.venueSlot || 0) % pool.length];
+    },
+
+    /** Home block for a worker — six blocks, spread by seed. */
+    _workerHome(c) {
+        const blocks = ['npc_apt_1', 'npc_apt_2', 'npc_apt_3', 'npc_apt_4', 'npc_apt_5', 'npc_apt_6']
+            .filter(id => G.bldById[id]);
+        if (!blocks.length) return c.homeBid;
+        return blocks[Math.floor(c.seed * blocks.length) % blocks.length];
+    },
+
     _assign(c, snap) {
         let act, bid;
-        if (c.model.founder) {
+        if (c.model.worker) {
+            // Shift work: on duty at the facility, off duty at the worker block.
+            // The night shift is the inverse of the day shift, so the industrial
+            // districts are staffed around the clock.
+            const dp = G.dayPhase;
+            const dayOn = dp > 0.30 && dp < 0.72;
+            const onDuty = c.model.worker.shift === 'night' ? !dayOn : dayOn;
+            act = onDuty ? 'work' : (dp > 0.92 || dp < 0.26 ? 'sleep' : 'socialize');
+            bid = onDuty ? this._workerVenue(c) : this._workerHome(c);
+        } else if (c.model.founder) {
             ({ act, bid } = getFounderAct(G.dayPhase, c.seed, c.model));
         } else {
             ({ act, bid } = getAct(c.stage, G.dayPhase, c.seed, c.model));
@@ -491,10 +556,14 @@ export const Citizens = {
         for (let k = 0; k < half; k++) {
             const c = this.list[(start + k) % n];
             if (c.indoors) {
-                // Keep matrices parked; no street sim while hidden
-                this._writeMatrix(c);
+                // Park the matrix once, then leave it alone. Rewriting the same
+                // off-world transform every frame for every hidden citizen was
+                // pure cost, and at the new population that is most of them
+                // during working hours.
+                if (!c._parked) { this._writeMatrix(c); c._parked = true; }
                 continue;
             }
+            c._parked = false;
             if (c.path.length && c.wp < c.path.length) {
                 const t = c.path[c.wp];
                 const dx = t.x - c.x, dz = t.z - c.z;

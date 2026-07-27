@@ -443,9 +443,19 @@ export const Metro = {
         this._write();
     },
 
+    /** Every station on the network, from the routes themselves. */
+    stationIds() {
+        const ids = new Set();
+        for (const r of (this.routes || [])) for (const id of r.stops) ids.add(id);
+        return ids;
+    },
+
     nearestStation(x, z, maxDist = 220) {
         let best = null, bd = maxDist;
-        for (const id of ['metro_west', 'metro_central', 'metro_east', 'metro_innovation']) {
+        // Derived from the routes rather than a hardcoded list — the station set
+        // grew from 4 to 6 and a hardcoded list silently made the two new ones
+        // unboardable.
+        for (const id of this.stationIds()) {
             const b = G.bldById[id];
             if (!b) continue;
             const d = Math.hypot(b.worldX - x, b.worldZ - z);

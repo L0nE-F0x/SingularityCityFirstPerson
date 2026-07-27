@@ -1,5 +1,5 @@
 /* ══════════════════════════════════════════════════════════════════════════
-   CITY LAYOUT — places every building into the 5×4 district grid.
+   CITY LAYOUT — places every building into the 5×5 district grid.
    Ported from SingularityCity3D districts.js (round-robin quadrant clusters
    around an inner cross-road), extended with roads, walkable plazas and
    collision boxes.
@@ -15,8 +15,65 @@ export const INNER_STRIP = CARRIAGE.inner + SIDEWALK.inner * 2;
 export const KERB_H = 1.8;
 export const LANE_W = 30;          // one lane; cars sit on its centre
 
+// Deterministic RNG (same generator as world.js) so the infill blocks are
+// identical every visit and the collision boxes match what you can see.
+function mulberry32(a) {
+    return function () {
+        a |= 0; a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+/* Storey multiplier per building type. The authored `fl` values top out at 9,
+   which at FLOOR_H 24 made Google DeepMind — the tallest structure in
+   Singularity City — 21.6 m, while footprints ran to 18 m wide. Every building
+   was twice as wide as it was tall, so there was no skyline at all, and all of
+   world.js's setback / crown / spire code was unreachable dead code because it
+   gates on 10+ storeys. The authored numbers stay the source of relative
+   ranking; this turns them into a city.
+
+   `slim` narrows the footprint for the tall types so towers read as towers
+   rather than as very large sheds. */
+const HEIGHT_SCALE = {
+    hq:         { fl: 3.6, slim: 0.78 },   // the lab HQs ARE the skyline (~7:1)
+    generic:    { fl: 2.1, slim: 0.86 },
+    housing:    { fl: 2.6, slim: 0.80 },
+    newspaper:  { fl: 2.6, slim: 0.80 },
+    bar:        { fl: 1.7, slim: 0.90 },
+    embassy:    { fl: 1.7, slim: 0.92 },
+    datacenter: { fl: 1.3, slim: 1.0 },
+    fab:        { fl: 1.3, slim: 1.0 },
+    warehouse:  { fl: 1.2, slim: 1.0 },
+    villa:      { fl: 1.0, slim: 1.0 },
+    cabin:      { fl: 1.0, slim: 1.0 },
+    metro:      { fl: 1.0, slim: 1.0 }
+};
+const HEIGHT_DEFAULT = { fl: 1.9, slim: 0.9 };
+
+/* How much of a district's leftover land gets anonymous background blocks, and
+   how tall they are. The named buildings are only 3–7 per district in an
+   800×800 cell, which left the city reading as a sparse office park with
+   enormous empty lots between landmarks. Infill is what turns it into a city:
+   the landmarks stay the landmarks, but they now sit in a built-up block
+   instead of a field. */
+const INFILL = {
+    urban:     { p: 0.82, fl: [4, 14] },
+    industry:  { p: 0.58, fl: [1, 4] },
+    coastal:   { p: 0.46, fl: [1, 4] },
+    suburban:  { p: 0.72, fl: [2, 5] },
+    academic:  { p: 0.44, fl: [2, 6] },
+    plaza:     { p: 0.22, fl: [2, 5] },
+    wasteland: { p: 0.38, fl: [1, 3] },
+    desert:    { p: 0.10, fl: [1, 2] },
+    park:      { p: 0, fl: [1, 1] },
+    forest:    { p: 0, fl: [1, 1] }
+};
+
 export const City = {
     districts: [],          // enriched district defs with world coords
+    infill: [],             // background blocks filling the empty lots
     roads: [],              // { x, z, w, d, vertical, carriage, sidewalk }
     avenueXs: [], streetZs: [],   // road centrelines for traffic/citizens
     plazas: [],             // open walkable rects (park hearts etc.)
@@ -71,18 +128,22 @@ export const City = {
                     const col = i % cols, row = Math.floor(i / cols);
                     const bx = ccx - clusterW / 2 + col * slotW + slotW / 2;
                     const bz = ccz - clusterD / 2 + row * slotD + slotD / 2;
-                    const bw = Math.min(b.w, slotW - 24);
-                    const bd = Math.min(b.w * 0.8, slotD - 24);
-                    const bh = Math.max(FLOOR_H * 0.7, (b.fl || 3) * FLOOR_H);
+                    const hs = HEIGHT_SCALE[b.type] || HEIGHT_DEFAULT;
+                    const bw = Math.min(b.w, slotW - 24) * hs.slim;
+                    const bd = Math.min(b.w * 0.8, slotD - 24) * hs.slim;
+                    // Effective storeys — `floors`, not `b.fl`, is what the
+                    // renderer tiers, sets back and crowns off.
+                    const floors = Math.max(1, Math.round((b.fl || 3) * hs.fl));
+                    const bh = Math.max(FLOOR_H * 0.7, floors * FLOOR_H);
                     const p = {
-                        b, id: b.id, x: bx, z: bz, w: bw, d: bd, h: bh,
+                        b, id: b.id, x: bx, z: bz, w: bw, d: bd, h: bh, floors,
                         district: d.id, rot: 0
                     };
                     G.placements.push(p);
-                    G.bldById[b.id] = Object.assign(b, { worldX: bx, worldZ: bz, worldH: bh, worldW: bw, worldD: bd, district: d.id });
+                    G.bldById[b.id] = Object.assign(b, { worldX: bx, worldZ: bz, worldH: bh, worldW: bw, worldD: bd, worldFloors: floors, district: d.id });
                     // Collide box (pad a little). Open/walk-through types get
                     // their own precise colliders in world.js instead.
-                    const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish']);
+                    const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish', 'fusion', 'jail']);
                     if (!OPEN.has(b.type)) {
                         G.colliders.push({ x0: bx - bw / 2 - 2, z0: bz - bd / 2 - 2, x1: bx + bw / 2 + 2, z1: bz + bd / 2 + 2, id: b.id });
                     }
@@ -125,6 +186,8 @@ export const City = {
             this.roads.push({ x: d.cx, z: d.cz, w: CELL_W, d: INNER_STRIP, vertical: false, carriage: CARRIAGE.inner, sidewalk: SIDEWALK.inner, inner: true });
         }
 
+        this.buildInfill();
+
         // districtAt(x, z) lookup helper
         G.districtAt = (x, z) => {
             for (const d of this.districts) {
@@ -134,6 +197,69 @@ export const City = {
         };
 
         return this.districts;
+    },
+
+    /* Background city blocks on every lot the named buildings didn't claim.
+       Laid out on a regular grid so the result reads as city blocks rather than
+       scattered debris, clear of the inner cross road and of anything that
+       already has a collider. Each block also becomes a collider, so citizens,
+       traffic and the player all agree with what is drawn. */
+    buildInfill() {
+        this.infill = [];
+        const STEP = 104;            // lot pitch
+        const HALF = 392;            // stay a hair inside the cell so the pavement survives
+        const CROSS = 96;            // clearance around the inner cross road
+        let seed = 90210;
+
+        for (const d of this.districts) {
+            const cfg = INFILL[d.biome] || INFILL.urban;
+            if (cfg.p <= 0) continue;
+            const rnd = mulberry32(seed++);
+            // Centre the lot grid on the district so the blocks line up with the
+            // inner cross road instead of drifting to one corner.
+            const n = Math.floor((2 * HALF) / STEP);
+            const first = -((n - 1) / 2) * STEP;
+            for (let ix = 0; ix < n; ix++) {
+                for (let iz = 0; iz < n; iz++) {
+                    const gx = first + ix * STEP;
+                    const gz = first + iz * STEP;
+                    if (Math.abs(gx) < CROSS || Math.abs(gz) < CROSS) continue;
+                    if (rnd() > cfg.p) continue;
+
+                    const w = STEP * (0.62 + rnd() * 0.26);
+                    const dp = STEP * (0.62 + rnd() * 0.26);
+                    const x = d.cx + gx + (rnd() - 0.5) * 10;
+                    const z = d.cz + gz + (rnd() - 0.5) * 10;
+
+                    // Never build on top of a landmark, monument or plaza.
+                    let blocked = false;
+                    for (const c of G.colliders) {
+                        if (x + w / 2 + 16 > c.x0 && x - w / 2 - 16 < c.x1 &&
+                            z + dp / 2 + 16 > c.z0 && z - dp / 2 - 16 < c.z1) { blocked = true; break; }
+                    }
+                    if (blocked) continue;
+
+                    // Height falls off toward the city edge so the skyline has a
+                    // downtown rather than a uniform wall of blocks.
+                    const edge = Math.max(Math.abs(d.cx) / (CITY_W / 2), Math.abs(d.cz) / (CITY_D / 2));
+                    const [lo, hi] = cfg.fl;
+                    const span = hi - lo;
+                    const fl = Math.max(1, Math.round(lo + span * Math.pow(rnd(), 1.5) * (1 - edge * 0.45)));
+
+                    const lot = {
+                        x, z, w, d: dp,
+                        h: fl * FLOOR_H,
+                        fl,
+                        district: d.id,
+                        biome: d.biome,
+                        seed: rnd()
+                    };
+                    this.infill.push(lot);
+                    G.colliders.push({ x0: x - w / 2, z0: z - dp / 2, x1: x + w / 2, z1: z + dp / 2, id: 'infill' });
+                }
+            }
+        }
+        return this.infill;
     },
 
     // ── derived street geometry (pure — no renderer) ────────────────────────

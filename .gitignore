@@ -29,3 +29,6 @@ __pycache__/
 node_modules/
 pixi/node_modules/
 
+
+# dev-only playtest frames from serve.py /__shot
+.shots/

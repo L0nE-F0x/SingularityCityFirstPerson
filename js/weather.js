@@ -19,9 +19,15 @@ const DIM = {
     clear: 1, cloudy: 0.78, overcast: 0.55, fog: 0.58, drizzle: 0.62,
     rain: 0.48, thunderstorm: 0.34, snow: 0.78, cherry: 0.95, autumn: 0.85
 };
+/* Aerial perspective, not a haze wall. These used to top out at 2900 with the
+   fog colour locked to the (very light) horizon, so on a CLEAR day everything
+   past ~1.5 km bleached to near-white and the distant hills — which sit at
+   3900-5300 — were 100% fog, i.e. invisible. There was no landmass on the
+   horizon at all. Clear weather now carries most of the way to the camera far
+   plane so distance reads as distance rather than as a wall. */
 const FOG_FAR = {
-    clear: null, cloudy: 2900, overcast: 2000, fog: 320, drizzle: 1900,
-    rain: 1400, thunderstorm: 1000, snow: 1150, cherry: 3000, autumn: 2800
+    clear: 7000, cloudy: 5200, overcast: 3200, fog: 420, drizzle: 3000,
+    rain: 2200, thunderstorm: 1500, snow: 1800, cherry: 5600, autumn: 5000
 };
 const CLOUD_OP = {
     clear: 0.42, cloudy: 0.88, overcast: 1, fog: 0.35, drizzle: 0.94,
@@ -98,6 +104,10 @@ function softParticleMap(kind) {
         x.beginPath(); x.moveTo(8, 16); x.lineTo(24, 16); x.stroke();
     }
     const t = new THREE.CanvasTexture(c);
+    // Canvas content is authored in sRGB. Left as the default NoColorSpace the
+    // values are consumed un-converted — harmless for white, but it visibly
+    // over-saturated the cherry-blossom pink and autumn orange particles.
+    t.colorSpace = THREE.SRGBColorSpace;
     t.needsUpdate = true;
     return t;
 }
@@ -114,7 +124,9 @@ function cloudTexture() {
         x.fillStyle = g;
         x.beginPath(); x.arc(cx, cy, r, 0, Math.PI * 2); x.fill();
     }
-    return new THREE.CanvasTexture(c);
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
 }
 
 // Reused Color temps (avoid per-frame alloc in hot path)
@@ -189,6 +201,11 @@ export const Weather = {
                     // broader coronal wash around sun
                     float corona = pow(max(0.0, dot(n, normalize(sunDir))), 2.2) * sunGlow * 0.22;
                     col += vec3(1.0, 0.85, 0.6) * corona;
+                    // Ordered-ish dither. A smooth low-contrast gradient across
+                    // ~1000px of 8-bit output bands visibly, especially in blue;
+                    // a sub-LSB noise floor hides it for one hash.
+                    float d = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+                    col += (d - 0.5) / 255.0;
                     gl_FragColor = vec4(col, 1.0);
                 }`,
             side: THREE.BackSide, depthWrite: false, fog: false
@@ -199,6 +216,13 @@ export const Weather = {
 
         // fog (matching horizon)
         scene.fog = new THREE.Fog(0xcfe8f7, 200, G.preset.far);
+        /* The sky is a dome parked on the camera, so anything that moves the
+           camera between positioning the dome and drawing the frame — a
+           teleport, a mode switch, a debug camera — punches a hole straight
+           through to the clear colour, which is black. A background colour that
+           tracks the fog costs nothing (it IS the clear colour) and makes such
+           a gap invisible instead of a black wedge in the sky. */
+        scene.background = new THREE.Color(0xcfe8f7);
 
         // ── sun / moon sprites ──
         this.sunSpr = new THREE.Sprite(new THREE.SpriteMaterial({
@@ -242,6 +266,7 @@ export const Weather = {
         sgrad.addColorStop(1, 'rgba(0,0,0,0)');
         sctx.fillStyle = sgrad; sctx.fillRect(0, 0, 64, 64);
         const starMap = new THREE.CanvasTexture(starCan);
+        starMap.colorSpace = THREE.SRGBColorSpace;
         // ShaderMaterial so aSize + twinkle stay cheap (one material, no per-star CPU)
         this.starU = { opacity: { value: 0 }, twinkle: { value: 0 }, map: { value: starMap } };
         const starMat = new THREE.ShaderMaterial({
@@ -349,6 +374,20 @@ export const Weather = {
         this.aurora = this.auroraGroup;
         this.auroraMat = this._auroraRibbons[0].mat;
 
+        /* Image-based lighting from the sky itself. Every metallic surface in
+           the city (spires, mullions, shopfront glass, car bodies) needs
+           something to reflect or it renders as dead grey. Rather than ship a
+           cubemap asset, render the sky dome we already have into a small
+           PMREM: the reflections then track the real time of day and weather
+           for free — warm at dusk, blue at noon, slate in a storm.
+           A second sphere sharing the same ShaderMaterial keeps the live dome
+           out of the capture scene. */
+        this._envScene = new THREE.Scene();
+        this._envSky = new THREE.Mesh(new THREE.SphereGeometry(100, 24, 14), skyMat);
+        this._envScene.add(this._envSky);
+        this._envPhase = -1;
+        this._envDirty = true;
+
         // scratch
         this._sunDir = new THREE.Vector3();
         G.weatherIntensity = 0;
@@ -359,6 +398,24 @@ export const Weather = {
         if (this._climate?.start && !G._wxForced) {
             this.state = this._climate.start;
         }
+    },
+
+    /* Re-bake scene.environment from the current sky. Called from update()
+       only when the sun has actually moved enough to matter (or the weather
+       changed), because fromScene costs a few ms — far too much for a frame
+       budget, and completely invisible if run every ~1/100th of a day. */
+    _refreshEnvironment() {
+        const renderer = G.renderer;
+        if (!renderer) return;
+        if (!this._pmrem) {
+            this._pmrem = new THREE.PMREMGenerator(renderer);
+            this._pmrem.compileEquirectangularShader();
+        }
+        const prev = G.scene.environment;
+        const rt = this._pmrem.fromScene(this._envScene, 0, 1, 500);
+        G.scene.environment = rt.texture;
+        if (prev) prev.dispose();
+        this._envDirty = false;
     },
 
     // public: force a weather (used by konami egg / tests)
@@ -394,6 +451,7 @@ export const Weather = {
             const pool = Math.random() < 0.5 ? NEXT[this.state] : this._climate.favor;
             this.set(pool[Math.floor(Math.random() * pool.length)]);
             this._timer = 180 + Math.random() * 300;
+            this._envDirty = true;
         }
         this.intensity = Math.min(1, this.intensity + dt / 6);
         G.weatherIntensity = ['rain', 'thunderstorm', 'snow', 'drizzle'].includes(this.state)
@@ -473,6 +531,14 @@ export const Weather = {
             + (this.state === 'fog' ? 0.45 * this.intensity : 0)
             + (this.state === 'overcast' ? 0.15 : 0);
 
+        // Re-bake the IBL when the sky has visibly changed. 1/140th of a day is
+        // ~10 in-game minutes — fast enough that sunset reflections keep up,
+        // rare enough that the cost never lands on a frame that matters.
+        if (this._envDirty || Math.abs(dp - this._envPhase) > 1 / 140) {
+            this._envPhase = dp;
+            this._refreshEnvironment();
+        }
+
         // fog follows horizon colour; distance follows weather.
         // Skip while metro/interior own the fog volume (they save/restore on exit).
         // NEVER write fog/background while riding — metro re-locks after us each frame,
@@ -481,6 +547,7 @@ export const Weather = {
         const surfaceAtmo = !G.inside && !G.ridingMetro;
         if (G.scene.fog && surfaceAtmo) {
             G.scene.fog.color.copy(bot);
+            if (G.scene.background?.isColor) G.scene.background.copy(bot);
             // lightning flash bleaches fog briefly
             if (this._flash > 0) {
                 G.scene.fog.color.lerp(_cTmp2.set(0xddeeff), this._flash * 0.85);
@@ -488,14 +555,22 @@ export const Weather = {
             G.scene.fog.far += (fogFarTarget - G.scene.fog.far) * Math.min(1, dt * 0.5);
             // fog weather: near plane creeps in so streets drown
             const nearMul = this.state === 'fog' ? 0.02 + 0.04 * (1 - this.intensity)
-                : this.state === 'thunderstorm' ? 0.06
-                : 0.08;
+                : this.state === 'thunderstorm' ? 0.05
+                : 0.03;
             G.scene.fog.near = G.scene.fog.far * nearMul;
         }
 
         // lights
         const W = G.world;
         let flashBoost = this._flash * this._flash;
+        // With sun shadows on, the fill can (and must) come down hard: the old
+        // hemi+ambient budget existed purely to keep unshadowed geometry from
+        // going black, and it flattened every surface in the city. `fill` scales
+        // the whole indirect budget so the `low` (no-shadow) preset keeps the
+        // original generous values and everything else gets real contrast.
+        // 0.72 is the point where a shadowed façade still reads as blue shade
+        // rather than a black hole, while sunlit faces keep real contrast.
+        const fill = W.shadows ? 0.72 : 1;
         if (W.sun) {
             // Keep the light off the zenith. A vertical wall gets almost no
             // direct light from an overhead sun (N·L → 0), and the old arc
@@ -504,32 +579,46 @@ export const Weather = {
             // arc wide so the horizontal component stays strong all day.
             const el = Math.min(sunEl, SUN_MAX_EL);
             const horiz = Math.sqrt(Math.max(0.05, 1 - el * el));
-            W.sun.position.set(cam.x + az * 2200 * horiz, Math.max(120, el * 1800), cam.z + 1400 * horiz);
-            W.sun.intensity = 1.7 * day * dim + 0.12 + flashBoost * 2.8;
+            // Direction the light TRAVELS (sun → ground). World.aimSun keeps the
+            // light and its shadow frustum locked to this vector wherever the
+            // player stands, so the sun angle no longer drifts across the city.
+            W.aimSun(
+                -az * 2200 * horiz,
+                -Math.max(320, el * 1800),
+                -1400 * horiz,
+                cam.x, cam.z
+            );
+            W.sun.intensity = (W.shadows ? 2.2 : 1.7) * day * dim + 0.12 + flashBoost * 2.8;
             W.sun.color.setHSL(0.1, dusk > 0.3 ? 0.7 : 0.35, dusk > 0.3 ? 0.6 : 0.92);
             if (flashBoost > 0.05) {
                 W.sun.color.lerp(_cTmp2.set(0xc8e0ff), flashBoost * 0.7);
             }
+            // A shadow map that still renders at night is pure cost — the sun
+            // contributes nothing below the horizon.
+            if (W.shadows) W.sun.castShadow = day > 0.06 && !G.inside && !G.ridingMetro;
         }
         if (W.hemi) {
-            // Carries every surface the key light misses. With no shadow maps
-            // the shade side of a building is hemi + ambient and nothing else,
-            // so this has to be generous or half the city sits in the dark.
-            W.hemi.intensity = 0.54 + 1.32 * day * dim + flashBoost * 0.9;
+            // Carries every surface the key light misses.
+            W.hemi.intensity = (0.54 + 1.32 * day * dim) * fill + flashBoost * 0.9;
             W.hemi.color.copy(top).lerp(_cTmp2.set(0xffffff), 0.4);
         }
-        if (W.ambient) W.ambient.intensity = 0.45 + 0.45 * day;
+        if (W.ambient) W.ambient.intensity = (0.45 + 0.45 * day) * fill;
 
         // Indoors the sky is irrelevant — hold a steady interior level so a
         // lobby doesn't go pitch black at 3am. Metro cabin uses its own lights.
+        /* Interior levels were tuned against a NoToneMapping pipeline. ACES
+           rolls the top end off, so the same numbers left every lobby and bar
+           reading as a blackout — the rooms are lit almost entirely by ambient
+           and hemi, with no key light to survive the curve. */
         if (G.inside) {
-            if (W.hemi) W.hemi.intensity = 1.15;
-            if (W.ambient) W.ambient.intensity = 0.85;
-            if (W.sun) W.sun.intensity = 0.35;
+            if (W.hemi) W.hemi.intensity = 2.0;
+            if (W.ambient) W.ambient.intensity = 1.35;
+            if (W.sun) W.sun.intensity = 0.55;
+            if (W.ambient) W.ambient.color.setHex(0x9aa6bc);
         } else if (G.ridingMetro) {
-            if (W.hemi) W.hemi.intensity = 0.25;
-            if (W.ambient) W.ambient.intensity = 0.2;
-            if (W.sun) W.sun.intensity = 0.05;
+            if (W.hemi) W.hemi.intensity = 0.45;
+            if (W.ambient) W.ambient.intensity = 0.34;
+            if (W.sun) W.sun.intensity = 0.08;
         }
 
         // stars (shader opacity + twinkle clock) — never show under the slab
@@ -700,7 +789,11 @@ export const Weather = {
         // ── night effects on the city ──
         // Stronger lit windows + neon so night reads like the 2D city, not grey boxes.
         // Wetness.update runs after us and adds wet neon boost on top of winGlow.
-        const winGlow = night * night * 0.35 + night * 1.15; // ease-in toward full night
+        /* Nyepi is the Balinese day of silence — the island genuinely turns its
+           lights off. If it's running, the city does too, which is a far
+           stronger read than any decoration could be. */
+        const blackout = G.seasonal?.blackout ? 0.08 : 1;
+        const winGlow = (night * night * 0.35 + night * 1.15) * blackout; // ease-in toward full night
         this.winGlow = winGlow;
         for (const m of W.windowMats || []) {
             m.emissiveIntensity = Math.min(1.65, winGlow);
@@ -712,7 +805,21 @@ export const Weather = {
             }
         }
         if (W.lampHeadMat) {
-            W.lampHeadMat.color.setScalar(0.12 + night * 1.05 + flashBoost * 0.5);
+            W.lampHeadMat.color.setScalar((0.12 + night * 1.05) * blackout + flashBoost * 0.5);
+        }
+        // Halo + ground pool follow the same ramp. Hidden entirely by day and
+        // indoors so neither costs a blended draw when it can't be seen.
+        {
+            const lit = Math.max(0, night * night * 1.25 - 0.05) * (surfaceAtmo ? 1 : 0) * blackout;
+            if (W.lampGlowMat) {
+                W.lampGlowMat.opacity = Math.min(0.5, lit * 0.46);
+                W.lampGlowMat.visible = lit > 0.01;
+            }
+            if (W.lampPoolMat) {
+                // Wet tarmac throws the pool further, so let rain push it up.
+                W.lampPoolMat.opacity = Math.min(0.6, lit * (0.34 + G.weatherIntensity * 0.3));
+                W.lampPoolMat.visible = lit > 0.01;
+            }
         }
         // Neon signs punch up after dusk (Wetness multiplies further when raining)
         if (W.neonMat) {
@@ -722,13 +829,18 @@ export const Weather = {
             W.neonMat.opacity = Math.min(1, W.neonMat.userData._baseOpacity * (0.72 + night * 0.58));
             W.neonMat.transparent = true;
         }
-        // Soft magenta/cyan fill so neon "bounces" without shadow maps
-        if (W.ambient) {
-            W.ambient.color.copy(_ambDay).lerp(_ambNight, Math.min(1, night * 1.1));
-            W.ambient.intensity = 0.45 + 0.35 * day + night * 0.28 + flashBoost * 0.35;
-        }
-        if (W.hemi && !G.inside) {
-            W.hemi.intensity = 0.5 + 0.9 * day * dim + night * 0.22 + flashBoost * 0.9;
+        // Soft magenta/cyan fill so neon "bounces" without shadow maps.
+        // This used to run unconditionally and silently undid the interior /
+        // metro light overrides set above, so a lobby at 03:00 was lit by the
+        // night sky budget rather than its own.
+        if (surfaceAtmo) {
+            if (W.ambient) {
+                W.ambient.color.copy(_ambDay).lerp(_ambNight, Math.min(1, night * 1.1));
+                W.ambient.intensity = (0.45 + 0.35 * day + night * 0.28) * fill + flashBoost * 0.35;
+            }
+            if (W.hemi) {
+                W.hemi.intensity = (0.5 + 0.9 * day * dim + night * 0.22) * fill + flashBoost * 0.9;
+            }
         }
     }
 };

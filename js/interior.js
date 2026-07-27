@@ -17,6 +17,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G } from './state.js';
 import { LABS } from './data.js';
 import * as TEX from './textures.js';
+import { resolveRoom, floorLabel } from './interiors/rooms.js';
+import { seeded, P as PROP } from './interiors/kit.js';
 
 export const FLOOR_Y = -4000;          // where interiors live
 const ROOM_W = 560, ROOM_D = 460, ROOM_H = 96;
@@ -65,6 +67,13 @@ export const Interior = {
             if (e.code === 'KeyF' && this.maxFloor > 0) {
                 this.setFloor((this.floor + 1) % (this.maxFloor + 1));
                 return;
+            }
+            // Interactive props (the Times printing press, exhibit terminals).
+            // interact.js already owns E for lifts / exits / boarding, so we only
+            // claim the key when none of those apply — no double handling.
+            if (e.code === 'KeyE' && !this.atLift() && !this.atExit()) {
+                const hs = this.atHotspot();
+                if (hs) { this.useHotspot(hs); return; }
             }
             const dig = e.code.match(/^Digit(\d)$/);
             if (dig && this.maxFloor > 0 && this.atLift()) {
@@ -133,6 +142,11 @@ export const Interior = {
     },
 
     _floorsFor(b) {
+        // A bespoke layout owns its own storey count — the room list is the
+        // truth, not the exterior model's fl. (Metro keeps 0=hall, 1=platform,
+        // which interact.js relies on for boarding.)
+        const spec = resolveRoom(b);
+        if (spec) return Math.max(0, spec.floors.length - 1);
         const th = this._theme(b);
         // Metro: ticket hall (0) + platform (1) — board trains from platform
         if (th.cat === 'metro' || b.type === 'metro') return 1;
@@ -160,9 +174,14 @@ export const Interior = {
         this.floor = floorIdx;
         this.maxFloor = this._floorsFor(b);
         const th = this._theme(b);
+        const spec = resolveRoom(b);
+        this._spec = spec;
         // floor re-skins: lobby / mid / top feel different
         const top = this.maxFloor > 0 && floorIdx === this.maxFloor;
-        if (th.cat === 'metro' && floorIdx >= 1) {
+        if (spec) {
+            // bespoke rooms set their own per-floor mood before the shell is built
+            spec.theme?.(b, floorIdx, th, this.maxFloor);
+        } else if (th.cat === 'metro' && floorIdx >= 1) {
             th.cat = 'platform';
             th.wall = 0x0f172a; th.ceil = 0x020617; th.floor = 0x1e293b; th.lamp = 0xfbbf24; th.dim = true;
         } else if (floorIdx > 0 && th.cat === 'office') {
@@ -226,17 +245,32 @@ export const Interior = {
         const panels = th.dim
             ? [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]]
             : [[-1, -1], [0, -1], [1, -1], [-1, 0], [0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
-        for (const [ix, iz] of panels) lit(120, 2, 70, ix * 175, ROOM_H - 3, iz * 140, th.lamp);
-        // cove LEDs along ceiling perimeter
-        lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, -ROOM_D / 2 + 18, th.lamp);
-        lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, ROOM_D / 2 - 18, th.lamp);
+        // th.noPanels lets a bespoke room own its ceiling (cellars, tunnels)
+        if (!th.noPanels) {
+            for (const [ix, iz] of panels) lit(120, 2, 70, ix * 175, ROOM_H - 3, iz * 140, th.lamp);
+            // cove LEDs along ceiling perimeter
+            lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, -ROOM_D / 2 + 18, th.lamp);
+            lit(ROOM_W - 30, 1.5, 3, 0, ROOM_H - 5, ROOM_D / 2 - 18, th.lamp);
+        }
 
-        this._dress(b, box, lit, th, accent, floorIdx);
-        if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent, floorIdx);
+        this._propColliders = [];
+        this._liftZones = [];
+        this._hotspots = [];
+        if (spec) {
+            this._buildRoom(spec, b, box, lit, th, accent, floorIdx);
+        } else {
+            this._dress(b, box, lit, th, accent, floorIdx);
+            if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent, floorIdx);
+        }
+        // lift bank + street doorway are shared furniture: every room, bespoke
+        // or generic, needs them for the F / 0–9 / E contract to stay honest.
+        this._liftBank(box, lit, accent);
+        this._doorway(box, lit, accent);
 
         // floor indicator plaque (back wall)
         lit(60, 18, 2, 200, 50, -ROOM_D / 2 + WALL / 2 + 2, 0x111827);
-        this._floorLabel = `F${floorIdx}${this.maxFloor ? '/' + this.maxFloor : ''}`;
+        this._floorLabel = (spec && floorLabel(spec, floorIdx))
+            || `F${floorIdx}${this.maxFloor ? '/' + this.maxFloor : ''}`;
 
         if (parts.length) {
             const shell = new THREE.Mesh(mergeGeometries(parts, false),
@@ -276,10 +310,17 @@ export const Interior = {
         // name board on the back wall
         const signTex = TEX.lobbySign(b.name, (b.emoji || '🏢'), accentHex,
             lab ? lab.name : (b.type || '').toUpperCase());
+        // Bespoke rooms dress their own back wall, so their name board goes over
+        // the street door instead — you read it on the way out, not on the way in.
         const sign = new THREE.Mesh(
-            new THREE.PlaneGeometry(320, 80),
+            new THREE.PlaneGeometry(spec ? 250 : 320, spec ? 62 : 80),
             new THREE.MeshBasicMaterial({ map: signTex, transparent: true }));
-        sign.position.set(0, 74, -ROOM_D / 2 + WALL / 2 + 3);
+        if (spec) {
+            sign.position.set(0, ROOM_H - 18, ROOM_D / 2 - WALL / 2 - 3);
+            sign.rotation.y = Math.PI;
+        } else {
+            sign.position.set(0, 74, -ROOM_D / 2 + WALL / 2 + 3);
+        }
         this.group.add(sign);
         this._signMesh = sign;
 
@@ -794,8 +835,46 @@ export const Interior = {
             for (let i = 0; i < 5; i++) box(28, 18, 28, -180 + i * 36, 9, 140, 0x475569);
         }
 
-        // ── monumental lift bank (left wall) — always when multi-floor ───────
-        // Only when maxFloor>0 so F / E / 0–9 controls and prompts stay honest.
+    },
+
+    /** Signature contents for a registry room. Wraps the merge buckets in the
+     *  richer context room builders speak (plates, NPCs, seeded randomness). */
+    _buildRoom(spec, b, box, lit, th, accent, floorIdx) {
+        const self = this;
+        const solid = (x, z, w, d) => this._propColliders.push(
+            { x0: x - w / 2, z0: z - d / 2, x1: x + w / 2, z1: z + d / 2 });
+        const ctx = {
+            box, lit, solid,
+            /** Textured quad (canvas art). Kept out of the merge buckets because
+             *  each one carries its own map; rooms use them sparingly. */
+            plate(tex, w, h, x, y, z, rotY = 0) {
+                const m = new THREE.Mesh(
+                    new THREE.PlaneGeometry(w, h),
+                    new THREE.MeshBasicMaterial({ map: tex, transparent: true }));
+                m.position.set(x, y, z);
+                if (rotY) m.rotation.y = rotY;
+                self.group.add(m);
+                return m;
+            },
+            /** A named staffer — geometry merges, nameplate is a plate. */
+            npc(c, x, z, def, facing = 1) { PROP.npc(c, x, z, def, facing); },
+            /** Press-E point of interest (printing press, exhibits, terminals). */
+            hotspot(x, z, r, label, action) { self._hotspots.push({ x, z, r, label, action }); },
+            W: ROOM_W, D: ROOM_D, H: ROOM_H, WALL, DOOR_W,
+            // staff rosters rotate on the city clock exactly like the 2D app's do
+            night: (G.dayPhase == null) ? false : (G.dayPhase > 0.83 || G.dayPhase < 0.25),
+            b, th, floor: floorIdx, maxFloor: this.maxFloor,
+            accent: accent.getHex(), accentCss: '#' + accent.getHexString(),
+            rnd: seeded(`${b.id || 'x'}:${floorIdx}`)
+        };
+        const f = spec.floors[Math.max(0, Math.min(spec.floors.length - 1, floorIdx))];
+        f.build(ctx);
+    },
+
+    /** Monumental lift bank on the left wall — only when multi-floor, so the
+     *  F / E / 0–9 controls and their prompts never promise a lift that isn't
+     *  there. Shared by generic and bespoke rooms alike. */
+    _liftBank(box, lit, accent) {
         if (this.maxFloor > 0) {
             const lwx = -ROOM_W / 2 + WALL / 2;
             // full-height brushed steel alcove behind all three cars
@@ -838,7 +917,10 @@ export const Interior = {
             // chrome handrail along approach
             box(4, 4, 200, lwx + 70, 36, -40, 0x9ca3af);
         }
-        // door frame + daylight slab in the opening
+    },
+
+    /** Street doorway surround + the daylight slab that marks the way out. */
+    _doorway(box, lit, accent) {
         box(DOOR_W + 16, 6, 6, 0, 62, ROOM_D / 2 - WALL / 2, accent.getHex());
         box(6, 62, 6, -DOOR_W / 2 - 4, 31, ROOM_D / 2 - WALL / 2, accent.getHex());
         box(6, 62, 6, DOOR_W / 2 + 4, 31, ROOM_D / 2 - WALL / 2, accent.getHex());
@@ -991,6 +1073,30 @@ export const Interior = {
         if (!this.building || !this._liftZones?.length) return false;
         const p = G.camera.position;
         return this._liftZones.some(z => Math.hypot(p.x - z.x, p.z - z.z) < z.r);
+    },
+
+    /** The interactive prop the player is standing at, if any. Exposed so a
+     *  HUD module can prompt for it the way interact.js prompts for the lift. */
+    atHotspot() {
+        if (!this.building || !this._hotspots?.length) return null;
+        const p = G.camera.position;
+        let best = null, bestD = Infinity;
+        for (const h of this._hotspots) {
+            const d = Math.hypot(p.x - h.x, p.z - h.z);
+            if (d < h.r && d < bestD) { best = h; bestD = d; }
+        }
+        return best;
+    },
+
+    useHotspot(h) {
+        if (!h) return;
+        if (h.action === 'newspaper') {
+            G.progress?.unlock?.('news_read');
+            G.ui?.showPanel?.('newspaper');
+        } else if (typeof h.action === 'function') {
+            h.action(this);
+        }
+        G.audio?.sfx?.('open');
     },
 
     enter(b) {

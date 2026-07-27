@@ -1,12 +1,13 @@
 /* ══════════════════════════════════════════════════════════════════════════
    JAIL SYSTEM — models caught jailbreaking get a short detention at the
-   Black Market / Underground holding area, then release. Pure sim + optional
-   world markers.
+   AI Detention Center, then release. Pure sim + optional world markers.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { G } from './state.js';
 
-export const JAIL_BID = 'black_market';
+// The AI Detention Center is a real building now; the jail no longer has to
+// borrow the Black Market as a holding area.
+export const JAIL_BID = 'ai_jail';
 
 export function createJailState() {
     return {

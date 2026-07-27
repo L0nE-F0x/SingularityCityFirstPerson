@@ -11,7 +11,8 @@ import { City, KERB_H } from './city.js';
 
 export const VC_OFFICES = [
     'vcrow_apex', 'vcrow_horizon', 'vcrow_launchpad',
-    'vcrow_titan', 'vcrow_exchange', 'vcrow_cryptex'
+    'vcrow_titan', 'vcrow_exchange', 'vcrow_cryptex',
+    'vcrow_thrive', 'vcrow_foundersfund', 'vcrow_mgx'
 ];
 export const HQ_TARGETS = [
     'bld_o', 'bld_a', 'bld_g', 'bld_m', 'bld_mi', 'bld_ds', 'bld_x'

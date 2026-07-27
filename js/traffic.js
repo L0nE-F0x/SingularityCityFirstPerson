@@ -81,7 +81,7 @@ function buildOccupant(opts = {}) {
         g.add(arm);
     }
     g.add(torso, lap, head, hair);
-    return g;
+    return mergeByMaterial(g);
 }
 
 function addWheels(g, positions, radius = 5.4, width = 4.2) {
@@ -115,6 +115,44 @@ function addHeadTailLamps(g, noseX, tailX, y = 9, zSpread = 6.2) {
 }
 
 /** Premium sedan. Forward = +X. OPEN cabin (pillars + roof) + true glass + driver. */
+/* Collapse a freshly-built vehicle into one mesh per material.
+   The vehicle builders below are written as dozens of little boxes, which is
+   the right way to author them and the wrong way to draw them: at 44 meshes a
+   car, a fleet of 14 was 614 draw calls — more than the rest of the city put
+   together. Nothing on these vehicles animates independently (the wheels are
+   static geometry), so everything sharing a material can be baked into a
+   single buffer at build time. Same silhouette, ~4 draw calls per vehicle. */
+function mergeByMaterial(group) {
+    group.updateMatrixWorld(true);
+    // Bake transforms RELATIVE to the group, not in world space: some builders
+    // return a group that the caller then positions, and baking world matrices
+    // would apply that placement twice.
+    const toLocal = new THREE.Matrix4().copy(group.matrixWorld).invert();
+    const _m = new THREE.Matrix4();
+    const buckets = new Map();
+    group.traverse(o => {
+        if (!o.isMesh || o.isInstancedMesh) return;
+        const m = Array.isArray(o.material) ? o.material[0] : o.material;
+        if (!buckets.has(m)) buckets.set(m, []);
+        const g = o.geometry.clone();
+        g.applyMatrix4(_m.multiplyMatrices(toLocal, o.matrixWorld));
+        // merge needs matching attribute sets; drop anything exotic
+        for (const k of Object.keys(g.attributes)) {
+            if (k !== 'position' && k !== 'normal' && k !== 'uv') g.deleteAttribute(k);
+        }
+        buckets.get(m).push(g);
+    });
+    const out = new THREE.Group();
+    out.name = group.name;
+    for (const [mat, geos] of buckets) {
+        const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+        if (!merged) continue;                 // mismatched attributes — skip rather than crash
+        out.add(new THREE.Mesh(merged, mat));
+    }
+    // Nothing merged (shouldn't happen) — keep the original rather than a blank
+    return out.children.length ? out : group;
+}
+
 function buildSedan(bodyHex, opts = {}) {
     const g = new THREE.Group();
     const bodyM = paintMat(bodyHex);
@@ -200,7 +238,7 @@ function buildSedan(bodyHex, opts = {}) {
         floor, dash, seatFront, seatBack, seatBackRest, grille, fb, rb);
     g.userData.paintM = bodyM;
     g.userData.isDetailCar = true;
-    return g;
+    return mergeByMaterial(g);
 }
 
 /** VIP limousine — stretched cabin, rear CEO figure, driver, floating name plate. */
@@ -247,7 +285,7 @@ function buildVipLimo(founder) {
     g.add(spr);
     g.userData.nameSprite = spr;
     g.userData.founder = founder;
-    return g;
+    return mergeByMaterial(g);
 }
 
 /** Delivery van — tall cargo box, open cab glass, visible driver. */
@@ -307,7 +345,7 @@ function buildDeliveryVan(bodyHex) {
     const fb = new THREE.Mesh(new THREE.BoxGeometry(3, 4, 20), chromeM); fb.position.set(27, 6, 0);
     g.add(chassis, cargo, cargoRoof, cab, cabRoof, wind, sideL, sideR, seat, stripe, stripe2, fb);
     g.userData.paintM = bodyM;
-    return g;
+    return mergeByMaterial(g);
 }
 
 /** Nvidia-style supply truck — open cab glass, driver, green GPU container. */
@@ -389,7 +427,7 @@ function buildSupplyTruck() {
     const rb = new THREE.Mesh(new THREE.BoxGeometry(3, 5, 22), chromeM); rb.position.set(-44, 8, 0);
 
     g.add(rail, cabBase, cabRoof, wind, rearCab, sideL, sideR, seat, dash, box, topBar, fb, rb);
-    return g;
+    return mergeByMaterial(g);
 }
 
 /** Proper helicopter: fuselage, boom, skids, spinning rotors. Nose = +X. */
@@ -498,7 +536,7 @@ function buildHelicopter(colHex, opts = {}) {
     g.add(body, belly, nose, rear, canopy, cabinFloor, seat, boom, fin, stab, tailRotor, rotor);
     g.userData.rotor = rotor;
     g.userData.tailRotor = tailRotor;
-    return g;
+    return mergeByMaterial(g);
 }
 
 

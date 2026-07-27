@@ -1,10 +1,13 @@
 /* ══════════════════════════════════════════════════════════════════════════
    SINGULARITY CITY — FIRST PERSON · main entry
    Boot: data → layout → renderer → world → systems → loop.
-   Performance posture (from the 3D-version autopsy): no shadow maps, no
-   post-processing, no logarithmic depth, DPR capped, instancing everywhere.
+   Performance posture (from the 3D-version autopsy): no post-processing, no
+   logarithmic depth, DPR capped, instancing everywhere. One sun shadow map
+   with a tight player-following frustum (off on the `low` preset) — it is the
+   one thing a flat-shaded city cannot fake.
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
+import * as TEX from './textures.js';
 import { G, qualityPreset, computeDayPhase } from './state.js';
 import { City } from './city.js';
 import { World } from './world.js';
@@ -35,6 +38,8 @@ import { Conference } from './conference.js';
 import { Seasonal } from './seasonal.js';
 import { Kardashev } from './kardashev.js';
 import { Wetness } from './wetness.js';
+import { Ambience } from './ambience.js';
+import { NewsReactivity } from './news_reactivity.js';
 import { Terminal } from './terminal.js';
 import { CityStore } from './store/city_store.js';
 import { Live } from './store/live.js';
@@ -66,17 +71,37 @@ async function boot() {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, G.preset.dpr));
     renderer.setSize(innerWidth, innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    // ACES is a photographic curve — it crushed the midtones of a flat-shaded,
-    // procedurally-textured city and cost ~25% scene luminance for nothing the
-    // art style wanted. The exposure bump to 1.22 was papering over it.
-    renderer.toneMapping = THREE.NoToneMapping;
-    renderer.toneMappingExposure = 1.0;
+    /* ACES was reverted once before because it "crushed the midtones". That was
+       a real symptom of a different cause: facadeTint was clamping building
+       colours in LINEAR space and forcing every wall into a near-white band, so
+       the whole frame already sat in a ~0.18-wide sRGB window with no black
+       point and nothing to roll off. With the tint clamp fixed and the fill
+       lights rebalanced against sun shadows, there is real range to map, and
+       ACES is what stops the sunlit faces from clipping flat. */
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.35;
+    TEX.setMaxAnisotropy(renderer.capabilities.getMaxAnisotropy());
+    // Sun shadows. One directional light with a tight ortho frustum that
+    // follows the player (World._updateShadowFrustum). Off on `low`.
+    if (G.preset.shadowMap > 0) {
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.shadowMap.autoUpdate = true;
+    }
     document.getElementById('app').appendChild(renderer.domElement);
     G.renderer = renderer;
     G.canvas = renderer.domElement;
 
     G.scene = new THREE.Scene();
-    G.camera = new THREE.PerspectiveCamera(G.settings.fov, innerWidth / innerHeight, 0.5, 12000);
+    /* near/far drive depth precision, and this scene stacks five near-coplanar
+       ground surfaces inside 0.6 units (base −2, tiles 0.02, pavement 0.25,
+       road 0.4, markings 0.62). At near=0.5/far=12000 a 24-bit buffer can only
+       resolve ~0.48 units at 2000 out, so lane markings and pavement seams
+       z-fought and flickered down every long avenue. near=4 is 40 cm — nothing
+       gets that close to the eye given PLAYER_RADIUS 7 — and the hills top out
+       around 6500, so far=8000 covers everything. ~10x the depth precision for
+       two numbers. */
+    G.camera = new THREE.PerspectiveCamera(G.settings.fov, innerWidth / innerHeight, 4, 8000);
 
     window.addEventListener('resize', () => {
         G.camera.aspect = innerWidth / innerHeight;
@@ -122,6 +147,8 @@ async function boot() {
     Seasonal.init(G.scene);
     Kardashev.init(G.scene);
     Wetness.init(G.scene);
+    Ambience.init(G.scene);
+    G.ambience = Ambience;
     Terminal.init();
     G.vcDealFlow = VCDealFlow;
     G.researchPapers = ResearchPapers;
@@ -143,12 +170,20 @@ async function boot() {
     Interact.init();
     Player.placeAtSpawn();
 
+    // Every system has now added its meshes — decide once who casts and who
+    // receives, instead of each module having to remember.
+    World.finalizeShadows(G.scene);
+
     // Integration: live data + view shell (CityStore already init via Progress)
     G.store = CityStore;
     G.live = Live;
     G.shell = Shell;
     Live.start();
     Shell.init();
+    // After the store: it seeds from the current headlines so booting doesn't
+    // fire a reaction for every story already in the feed.
+    NewsReactivity.init(G.scene);
+    G.newsReactivity = NewsReactivity;
     // Arriving from Pixi 2D hard-swap: toast + consume token
     {
         const tok = readResumeToken();
@@ -213,6 +248,7 @@ async function boot() {
             VCDealFlow.update(1 / 30);
             ResearchPapers.update(1 / 30);
             Metro.update(1 / 30);
+            Ambience.update(1 / 30, t);
             Jail.update(1 / 30);
             Court.update(1 / 30);
         }
@@ -276,6 +312,9 @@ async function boot() {
             Seasonal.update(dt);
             Kardashev.update(dt);
             Wetness.update(dt);
+            Ambience.update(dt, G.time);
+            // after Weather: the crisis flicker overrides the window emissive ramp
+            NewsReactivity.update(dt);
             Terminal.update(dt);
             UI.update(dt);
             {

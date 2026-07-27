@@ -12,12 +12,14 @@ import { makePaperJob, stepPaper, PAPER_LABS, PAPER_SOURCES } from '../js/resear
 import { STAGE_CODE } from '../js/citizens.js';
 import { buildMetroRoutes, stepTrain } from '../js/metro.js';
 import { createJailState, tryArrest, stepJail, JAIL_BID } from '../js/jail.js';
+import { BLDS } from '../js/data.js';
 import { createCourtState, enqueueCase, stepCourt } from '../js/court.js';
 import { createOrbitState, enterOrbit, exitOrbit, updateOrbitCamera } from '../js/orbit_mode.js';
 import { applyXray } from '../js/xray_mode.js';
 import { buildHolomapGeometry } from '../js/holomap.js';
 import { conferenceStatus } from '../js/conference.js';
-import { seasonForDate, SEASONS } from '../js/seasonal.js';
+import { seasonForDate, SEASONS, easterFor, resolveFestivals, activeFestivals, FESTIVALS, REGIONAL } from '../js/seasonal.js';
+import { classifyHeadline } from '../js/news_reactivity.js';
 import { kardashevScale } from '../js/kardashev.js';
 import { isWetWeather, puddleLayout } from '../js/wetness.js';
 import { createGhosts, Multiplayer } from '../js/multiplayer.js';
@@ -122,7 +124,10 @@ assert(js.inmates.length === 1, 'inmate held');
 js.inmates[0].timeLeft = 0.5;
 const rel = stepJail(js, 1);
 assert(rel.length === 1 && js.processed === 1, 'jail releases after time');
-assert(JAIL_BID === 'black_market', 'jail venue is black_market');
+// The jail used to borrow the Black Market as a holding area because there was
+// no detention building. There is one now, and it must be a real placed building.
+assert(JAIL_BID === 'ai_jail', 'jail venue is the AI Detention Center');
+assert(BLDS.some(b => b.id === JAIL_BID), 'detention centre exists in BLDS');
 
 // 6. Court
 const cs = createCourtState();
@@ -165,6 +170,39 @@ const season = seasonForDate(new Date(2026, 11, 15));
 assert(season.id && SEASONS[11], 'seasonal month map works');
 const k = kardashevScale(900);
 assert(k.k > 0 && k.tier.length > 3, 'kardashev scale from AI index');
+
+// 10b. Festival calendar — the real 19-holiday set, not a month label map
+assert(FESTIVALS.length + REGIONAL.length === 19, '19 festivals defined');
+{
+    const e = easterFor(2026);
+    assert(e.month === 4 && e.day === 5, 'Easter 2026 computus = 5 April');
+    const resolved = resolveFestivals(2026);
+    assert(resolved.every(f => f.sm > 0), 'every 2026 festival resolves to a date');
+    // sweep the year with every region enabled: all 19 must fire at some point
+    const allRegions = ['east_asia', 'japan', 'south_asia', 'southeast_asia',
+        'indonesia', 'middle_east', 'jewish', 'latin_america', 'thailand'];
+    const seen = new Set();
+    for (let d = new Date(2026, 0, 1); d.getFullYear() === 2026; d.setDate(d.getDate() + 1)) {
+        for (const f of activeFestivals(new Date(d), allRegions)) seen.add(f.id);
+    }
+    assert(seen.size === 19, 'all 19 festivals fire during 2026 (got ' + seen.size + ')');
+    // regional festivals must NOT show to a player outside their region
+    const diwaliDay = new Date(2026, 10, 9);
+    assert(activeFestivals(diwaliDay, ['south_asia']).some(f => f.id === 'diwali'), 'Diwali shows in South Asia');
+    assert(!activeFestivals(diwaliDay, []).some(f => f.id === 'diwali'), 'Diwali hidden outside its regions');
+}
+
+// 10c. News reactivity classifier
+{
+    const c = (t) => classifyHeadline(t);
+    assert(c('OpenAI launches GPT-5').lab === 'openai', 'routes to OpenAI');
+    assert(c('OpenAI launches GPT-5').sentiment === 'celebrate', 'launch = celebrate');
+    assert(c('Meta researcher resigns amid class action').sentiment === 'emergency', 'lawsuit = emergency');
+    assert(c('EU AI Act: Google faces antitrust hearing').sentiment === 'regulatory', 'hearing = regulatory');
+    assert(c('xAI under fire after Grok outage').sentiment === 'crisis', 'outage = crisis');
+    // the classic false positive: "O2 Arena" must not read as OpenAI's o2
+    assert(c('Concert at the O2 Arena sells out').lab === null, 'O2 Arena is not OpenAI');
+}
 
 // 11. Wetness + real neon boost wiring
 assert(isWetWeather('rain') && isWetWeather('thunderstorm') && !isWetWeather('clear'), 'wet weather detection');

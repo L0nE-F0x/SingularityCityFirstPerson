@@ -77,7 +77,11 @@ export const ChatBubbles = {
         } else {
             pool = CHAT_MSGS[c.act] || CHAT_MSGS.work;
         }
-        const text = pool[(Math.random() * pool.length) | 0];
+        // A running festival occasionally displaces the routine line — it is
+        // what makes Diwali or Obon feel like the city noticed, not just decor.
+        let text = null;
+        if (Math.random() < 0.3) text = G.seasonal?.chatLine?.() ?? null;
+        if (!text) text = pool[(Math.random() * pool.length) | 0];
         this._draw(b, text);
         b.cz = c;
         b.ttl = LIFE[0] + Math.random() * (LIFE[1] - LIFE[0]);

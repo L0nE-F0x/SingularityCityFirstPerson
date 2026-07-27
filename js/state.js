@@ -16,7 +16,9 @@ export const CELL_W = 800;
 export const CELL_D = 800;
 export const GAP = 200;
 export const GRID_COLS = 5;
-export const GRID_ROWS = 4;
+// Row 4 carries the districts the 2D city has and FP was missing entirely:
+// CEO estates, worker housing, suburbia, Silicon Woods, Frontier Pines.
+export const GRID_ROWS = 5;
 
 // City extents (computed)
 export const CITY_W = GRID_COLS * (CELL_W + GAP) - GAP;   // 4800
@@ -50,13 +52,24 @@ export const G = {
 };
 
 export function qualityPreset(q) {
+    // `shadowMap` is the sun shadow-map resolution, 0 = shadows off. A single
+    // directional light with a tight ortho frustum that follows the player is
+    // the cheapest way to get contact/occlusion cues; without it a flat-shaded
+    // city reads as cardboard no matter how good the textures are.
+    // `shadowRadius` is the half-extent (world units) of that frustum.
     switch (q) {
         // The production city is a PEDESTRIAN world — it runs a single Nvidia
         // delivery truck, not a traffic sim. A handful of ambient cars keeps
         // the streets from being dead without turning it into a freeway.
-        case 'low':    { return { dpr: 1.0,  particles: 900,  citizens: 150, cars: 6,  far: 2600 }; }
-        case 'high':   { return { dpr: 1.75, particles: 2200, citizens: 340, cars: 16, far: 4200 }; }
-        default:       { return { dpr: 1.35, particles: 1500, citizens: 240, cars: 10, far: 3400 }; }
+        /* Citizen counts were set for a 4800x3800 city where most of the roster
+           was hidden indoors during working hours; on the 4800x4800 grid that
+           worked out at roughly one visible pedestrian per 1000 m² and the
+           streets read as evacuated. They are a single InstancedMesh, so the
+           only cost of more of them is CPU stepping — which is already
+           staggered across frames. */
+        case 'low':    { return { dpr: 1.0,  particles: 900,  citizens: 380, cars: 8,  far: 2600, shadowMap: 0,    shadowRadius: 0 }; }
+        case 'high':   { return { dpr: 1.75, particles: 2200, citizens: 1100, cars: 22, far: 4200, shadowMap: 4096, shadowRadius: 900 }; }
+        default:       { return { dpr: 1.35, particles: 1500, citizens: 700, cars: 14, far: 3400, shadowMap: 2048, shadowRadius: 700 }; }
     }
 }
 

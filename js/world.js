@@ -18,6 +18,15 @@ import { LABS, SPACE_ORGS, BIOMES, DISTRICTS, NEWS } from './data.js';
 import * as TEX from './textures.js';
 import { City, CARRIAGE, KERB_H } from './city.js';
 
+// How far up the sun sits from the shadow frustum centre. Short enough to keep
+// depth precision usable, tall enough to clear the tallest tower.
+const SHADOW_DIST = 1800;
+const _sDir = new THREE.Vector3();
+const _sRight = new THREE.Vector3();
+const _sUp = new THREE.Vector3();
+const _sUpRef = new THREE.Vector3(0, 1, 0);
+const _sTmp = new THREE.Vector3();
+
 // Deterministic RNG so the city is identical every visit
 function mulberry32(a) {
     return function () {
@@ -93,14 +102,48 @@ const DISTRICT_TINT = {
     underground: '#4a4038', residential: '#8a6d5c', embassy: '#b8bcc6', embassy_q: '#cbb79a'
 };
 
+/* Every Standard material in the city used to set envMapIntensity: 0 while
+   also setting metalness 0.2-0.7. In the metallic-roughness model a metal has
+   NO diffuse term — its whole appearance is the specular reflection of the
+   environment — so those spires, mullions and shopfront panes rendered as dead
+   featureless grey. Weather.updateEnvironment feeds scene.environment from the
+   sky dome, which makes all of it reflect the actual sky at the actual time of
+   day, for one small cubemap. */
+const ENV_I = 0.9;
+
+// Seeded facade textures per height tier. 3 keeps VRAM sane (9 x 512^2 pairs)
+// while breaking up the "every building is the same building" read.
+const FACADE_VARIANTS = 3;
+
+/* Ledges, parapet caps, setback plates, spires and mullions were six near
+   identical cool greys (0x8a94a4 .. 0xdce4f0) on every building in the city, so
+   from any distance the skyline read as coloured boxes wearing identical bright
+   white lids. These meshes are already instanced, so per-instance trim colour is
+   free: take the building's own tint, desaturate it toward concrete and darken
+   it, and the trim belongs to the building it sits on. */
+const _trim = new THREE.Color();
+const _trimHsl = { h: 0, s: 0, l: 0 };
+function trimColor(hex, lightness = 0.44) {
+    _trim.set(hex).getHSL(_trimHsl, THREE.SRGBColorSpace);
+    return _trim.setHSL(_trimHsl.h, _trimHsl.s * 0.35, lightness, THREE.SRGBColorSpace);
+}
+
+// Fallback palette for infill in districts DISTRICT_TINT doesn't name.
+const INFILL_TINT = {
+    urban: '#5f6a7c', industry: '#6a6257', coastal: '#5b6d78', suburban: '#8a6d5c',
+    academic: '#6b6a80', plaza: '#68717f', wasteland: '#524a42', desert: '#8a7a5e'
+};
+
 function buildingColor(b) {
     if (b.lab && LABS[b.lab]) return LABS[b.lab].color;
     if (b.dcData && b.dcData.color) return b.dcData.color;
     if (TYPE_COLORS[b.type]) return TYPE_COLORS[b.type];
     const base = DISTRICT_TINT[b.district] || '#5a6472';
     const c = new THREE.Color(base);
-    c.offsetHSL((rng() - 0.5) * 0.03, (rng() - 0.5) * 0.08, (rng() - 0.5) * 0.08);
-    return '#' + c.getHexString();
+    // offsetHSL also works in the linear working space, where a ±0.08 nudge is
+    // perceptually invisible. Widen it so neighbouring blocks actually differ.
+    c.offsetHSL((rng() - 0.5) * 0.06, (rng() - 0.5) * 0.16, (rng() - 0.5) * 0.14);
+    return '#' + c.getHexString(THREE.SRGBColorSpace);
 }
 
 /* Brand colours are chosen for logos on white, not for façades: many are
@@ -108,17 +151,94 @@ function buildingColor(b) {
    colours MULTIPLY the facade texture, so those blocks collapse to near-black
    in daylight and the whole city reads as dusk at noon. Pull the tint into a
    range a lit wall can survive — hue (the identity) is untouched; the neon
-   signs still carry the full-strength brand colour. */
+   signs still carry the full-strength brand colour.
+
+   The colour space matters and used to be wrong. `Color.getHSL`/`setHSL`
+   default to ColorManagement.workingColorSpace, which is LINEAR — so a clamp
+   of L to [0.46, 0.74] was clamping LINEAR lightness, i.e. sRGB [0.71, 0.88].
+   Every façade in the city was forced into a near-white band, and the
+   saturation clamp bit far harder than 0.42 suggests: district grey #5a6b80
+   came out #94aecf and DeepSeek's vivid #0ea5e9 came out #8db2d3 — two
+   completely different colours landing on the same pale blue. That single line
+   is most of why the city read as flat washed-out grey. Clamp in sRGB, where
+   the numbers mean what they look like. */
 const _tint = new THREE.Color();
 const _hsl = { h: 0, s: 0, l: 0 };
-const FACADE_MIN_L = 0.46, FACADE_MAX_L = 0.74, FACADE_MAX_S = 0.42;
+const FACADE_MIN_L = 0.24, FACADE_MAX_L = 0.62, FACADE_MAX_S = 0.58;
 function facadeTint(hex) {
-    _tint.set(hex).getHSL(_hsl);
+    _tint.set(hex).getHSL(_hsl, THREE.SRGBColorSpace);
     return _tint.setHSL(
         _hsl.h,
         Math.min(_hsl.s, FACADE_MAX_S),
-        Math.max(FACADE_MIN_L, Math.min(FACADE_MAX_L, _hsl.l))
+        Math.max(FACADE_MIN_L, Math.min(FACADE_MAX_L, _hsl.l)),
+        THREE.SRGBColorSpace
     );
+}
+
+/* ── shared building box ────────────────────────────────────────────────────
+   One unit box, origin at its base, carrying a baked vertical ambient-occlusion
+   gradient in its `color` attribute. There is no SSAO here (no post-processing)
+   and a shadow map can't produce the soft darkening where a wall meets the
+   ground, so this fakes it for free: r160's color_vertex chunk multiplies
+   `color` and `instanceColor` together, so the AO composes with the per-building
+   tint without either fighting the other. It is the cheapest thing in the whole
+   renderer that makes a box stop floating. */
+function buildingBoxGeometry() {
+    const g = new THREE.BoxGeometry(1, 1, 1);
+    g.translate(0, 0.5, 0);
+    const pos = g.attributes.position;
+    const col = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i++) {
+        const y = pos.getY(i);                       // 0 at base, 1 at top
+        // dark at the base, neutral by a quarter height, then a whisker of
+        // extra light at the parapet where the sky wraps around the edge
+        const ao = 0.52 + 0.48 * Math.min(1, y / 0.22) + Math.max(0, y - 0.9) * 0.35;
+        col[i * 3] = col[i * 3 + 1] = col[i * 3 + 2] = Math.min(1.12, ao);
+    }
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return g;
+}
+
+/* Façade UVs used to be the unit box's 0..1 per face, stretched by the instance
+   matrix — so a 186-wide block and an 87-wide block both showed exactly `cols`
+   windows, and window size and aspect varied arbitrarily across the city.
+   Nothing reads as cheap CG faster than that. This carries a per-instance
+   repeat count so a window is the same physical size on every building; counts
+   are rounded to whole repeats so no pane is ever sliced at a face seam. */
+const UV_REF_H = 26;   // world units per window column
+function attachUVScale(mesh, list, rowsPerTile) {
+    const n = list.length;
+    const arr = new Float32Array(n * 3);
+    const refH = UV_REF_H * (mesh.userData.uvCols || 8);
+    const refV = rowsPerTile * FLOOR_H;
+    for (let i = 0; i < n; i++) {
+        const p = list[i];
+        arr[i * 3] = Math.max(1, Math.round(p.w / refH));
+        arr[i * 3 + 1] = Math.max(1, Math.round(p.h / refV));
+        arr[i * 3 + 2] = Math.max(1, Math.round(p.d / refH));
+    }
+    mesh.geometry.setAttribute('aUVScale', new THREE.InstancedBufferAttribute(arr, 3));
+}
+
+function patchUVScale(mat) {
+    mat.onBeforeCompile = (s) => {
+        s.vertexShader = s.vertexShader
+            .replace('#include <common>', '#include <common>\nattribute vec3 aUVScale;')
+            .replace('#include <uv_vertex>', `#include <uv_vertex>
+                {
+                    vec3 an = abs(normal);
+                    vec2 sc = an.x > 0.5 ? vec2(aUVScale.z, aUVScale.y)
+                            : an.y > 0.5 ? vec2(aUVScale.x, aUVScale.z)
+                            : vec2(aUVScale.x, aUVScale.y);
+                    #ifdef USE_MAP
+                        vMapUv *= sc;
+                    #endif
+                    #ifdef USE_EMISSIVEMAP
+                        vEmissiveMapUv *= sc;
+                    #endif
+                }`);
+    };
+    return mat;
 }
 
 export const World = {
@@ -138,12 +258,40 @@ export const World = {
         this.sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
         this.sun.position.set(800, 1200, 400);
         scene.add(this.sun);
+        // A DirectionalLight aims at its target, and the target defaults to the
+        // world origin. Weather.update parks the sun relative to the camera, so
+        // with the default target the light DIRECTION swung around as the player
+        // walked — the same façade was lit at one end of the city and in shade at
+        // the other. An explicit target that tracks the camera keeps the sun
+        // vector constant everywhere, which is also what the shadow frustum needs.
+        this.sunTarget = new THREE.Object3D();
+        scene.add(this.sunTarget);
+        this.sun.target = this.sunTarget;
         this.ambient = new THREE.AmbientLight(0x8a97ac, 0.55);
         scene.add(this.ambient);
+
+        this.shadows = G.preset.shadowMap > 0;
+        if (this.shadows) {
+            const S = G.preset.shadowMap;
+            const R = G.preset.shadowRadius;
+            this.sun.castShadow = true;
+            this.sun.shadow.mapSize.set(S, S);
+            const sc = this.sun.shadow.camera;
+            sc.left = -R; sc.right = R; sc.top = R; sc.bottom = -R;
+            sc.near = 10; sc.far = SHADOW_DIST * 2.2;
+            sc.updateProjectionMatrix();
+            // Slope-scaled bias: the city is 10 units per metre, so absolute
+            // biases have to be an order of magnitude larger than the defaults
+            // or every wall self-shadows into stripes.
+            this.sun.shadow.bias = -0.0006;
+            this.sun.shadow.normalBias = 2.4;
+            this.sun.shadow.blurSamples = 12;
+        }
 
         this._buildGround(scene);
         this._buildGrass(scene);
         this._buildBuildings(scene);
+        this._buildInfill(scene);
         this._buildStreetGlass(scene);
         this._buildSigns(scene);
         this._buildProps(scene);
@@ -174,6 +322,8 @@ export const World = {
             new THREE.MeshLambertMaterial({ color: 0x2a3324 })
         );
         base.rotation.x = -Math.PI / 2; base.position.y = -2;
+        base.name = 'ground';
+        base.userData.shadowReceiveOnly = true;
         scene.add(base);
 
         // District tiles — parks/forests/suburbs get grass texture; others vertex colour
@@ -193,8 +343,11 @@ export const World = {
         }
         if (tiles.length) {
             const tilesMesh = new THREE.Mesh(mergeGeometries(tiles, false),
-                new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
+                new THREE.MeshStandardMaterial({
+                    vertexColors: true, roughness: 0.86, metalness: 0.0, envMapIntensity: ENV_I * 0.6
+                }));
             tilesMesh.matrixAutoUpdate = false;
+            tilesMesh.userData.shadowReceiveOnly = true;
             scene.add(tilesMesh);
         }
         if (grassTiles.length) {
@@ -203,6 +356,7 @@ export const World = {
                 new THREE.MeshLambertMaterial({ map: TEX.grassGround(), color: 0xc8e0b8 })
             );
             grassMesh.matrixAutoUpdate = false;
+            grassMesh.userData.shadowReceiveOnly = true;
             scene.add(grassMesh);
         }
 
@@ -223,9 +377,16 @@ export const World = {
             roadGeos.push(g);
         }
         if (roadGeos.length) {
+            /* Standard, not Lambert. Lambert has no specular term at all, so the
+               road could never catch a sky sheen or a wet highlight no matter what
+               wetness.js did to it — and with scene.environment now fed from the sky
+               dome, a rough dielectric road picks up grazing-angle reflection for free. */
             const roadMesh = new THREE.Mesh(mergeGeometries(roadGeos, false),
-                new THREE.MeshLambertMaterial({ map: roadTex }));
+                new THREE.MeshStandardMaterial({
+                    map: roadTex, roughness: 0.82, metalness: 0.0, envMapIntensity: ENV_I * 0.4
+                }));
             roadMesh.matrixAutoUpdate = false;
+            roadMesh.userData.shadowReceiveOnly = true;
             scene.add(roadMesh);
         }
 
@@ -248,8 +409,11 @@ export const World = {
         }
         if (pavGeos.length) {
             const m = new THREE.Mesh(mergeGeometries(pavGeos, false),
-                new THREE.MeshLambertMaterial({ map: pavTex }));
+                new THREE.MeshStandardMaterial({
+                    map: pavTex, roughness: 0.88, metalness: 0.0, envMapIntensity: ENV_I * 0.5
+                }));
             m.matrixAutoUpdate = false;
+            m.userData.shadowReceiveOnly = true;
             scene.add(m);
         }
     },
@@ -271,8 +435,11 @@ export const World = {
         }
         if (!geos.length) return;
         const m = new THREE.Mesh(mergeGeometries(geos, false),
-            new THREE.MeshLambertMaterial({ map: TEX.pavement() }));
+            new THREE.MeshStandardMaterial({
+                map: TEX.pavement(), roughness: 0.88, metalness: 0.0, envMapIntensity: ENV_I * 0.5
+            }));
         m.matrixAutoUpdate = false;
+        m.userData.shadowReceiveOnly = true;
         scene.add(m);
     },
 
@@ -346,8 +513,14 @@ export const World = {
         }
         if (!geos.length) return;
         const m = new THREE.Mesh(mergeGeometries(geos, false),
-            new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: 0x222228 }));
+            new THREE.MeshStandardMaterial({
+                vertexColors: true, roughness: 0.72, metalness: 0.0, envMapIntensity: ENV_I * 0.5,
+                // Markings sit 0.22 units above the tarmac. Rather than rely on
+                // that gap surviving depth quantisation at distance, bias them.
+                polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4
+            }));
         m.matrixAutoUpdate = false;
+        m.userData.shadowReceiveOnly = true;
         scene.add(m);
     },
 
@@ -363,11 +536,23 @@ export const World = {
                 : d.biome === 'plaza' ? 220
                 : 180;
             const pad = d.biome === 'park' || d.biome === 'forest' ? 40 : 80;
+            // must match the skip list in _buildGround's pavement-pad loop
+            const hasPads = !['forest', 'desert', 'park'].includes(d.biome);
             for (let i = 0; i < n; i++) {
                 const gx = d.cx + (rng() - 0.5) * (CELL_W - pad);
                 const gz = d.cz + (rng() - 0.5) * (CELL_D - pad);
                 // keep off road corridors through district centre
                 if (Math.abs(gx - d.cx) < 36 && Math.abs(gz - d.cz) < 36) continue;
+                // ...and off the paving. Only the district-centre cross was
+                // excluded before, so blades sprouted straight out of the
+                // tarmac and the sidewalk slabs and read as green confetti
+                // scattered over the street.
+                if (City.onCarriageway(gx, gz) || City.onSidewalk(gx, gz)) continue;
+                // ...and off the four 352² paved quadrant pads, where those exist
+                // (parks, forests and desert districts don't get them).
+                if (hasPads &&
+                    Math.abs(Math.abs(gx - d.cx) - 210) < 176 &&
+                    Math.abs(Math.abs(gz - d.cz) - 210) < 176) continue;
                 // avoid building footprints roughly
                 let hit = false;
                 for (const p of G.placements) {
@@ -412,6 +597,7 @@ export const World = {
         const mesh = new THREE.InstancedMesh(geo, mat, spots.length);
         mesh.frustumCulled = true;
         mesh.name = 'grass';
+        mesh.userData.shadowReceiveOnly = true;
         const dummy = new THREE.Object3D();
         const c = new THREE.Color();
         spots.forEach((s, i) => {
@@ -446,15 +632,55 @@ export const World = {
             scene.add(clumps);
         }
     },
+    /* The three shared façade atlases (low / mid / high rise). Generated once
+       and reused by the named buildings AND the background infill — a 512²
+       canvas per tier instead of per building is the whole reason the city
+       fits in a handful of draw calls. */
+    _facadeTiers() {
+        if (!this._tiers) {
+            const spec = [
+                { maxFl: 4, rows: 2, cols: 6, litRatio: 0.48 },
+                { maxFl: 9, rows: 4, cols: 7, litRatio: 0.55 },
+                { maxFl: 99, rows: 8, cols: 8, litRatio: 0.62 }
+            ];
+            this._tiers = spec.map((t, ti) => ({
+                ...t,
+                // Several seeded variants per tier. With one texture per tier the
+                // mullion style, the soot streaks AND the lit-window pattern were
+                // rolled once and shared by every building in the city — after
+                // dark literally the same windows were lit on every mid-rise.
+                variants: Array.from({ length: FACADE_VARIANTS }, (_, v) =>
+                    TEX.facade(t.rows, { litRatio: t.litRatio, cols: t.cols, seed: 7919 * (ti + 1) + v * 104729 }))
+            }));
+            // Per-instance UV repeats sample the maps outside 0..1; left on the
+            // default ClampToEdge that smears the edge texel across the extra
+            // span instead of tiling.
+            for (const t of this._tiers) {
+                for (const f of t.variants) {
+                    for (const m of [f.map, f.emissiveMap]) {
+                        if (!m) continue;
+                        m.wrapS = m.wrapT = THREE.RepeatWrapping;
+                        m.needsUpdate = true;
+                    }
+                }
+            }
+        }
+        return this._tiers;
+    },
+
+    /** Stable per-building variant pick, so a building looks the same every visit. */
+    _variantOf(key) {
+        let h = 2166136261;
+        const s = String(key || '');
+        for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+        return (h >>> 0) % FACADE_VARIANTS;
+    },
+
     // ── BUILDINGS ────────────────────────────────────────────────────────────
     _buildBuildings(scene) {
-        const tiers = [
-            { maxFl: 2, rows: 2, facades: TEX.facade(2, { litRatio: 0.48, cols: 6 }) },
-            { maxFl: 5, rows: 4, facades: TEX.facade(4, { litRatio: 0.55, cols: 7 }) },
-            { maxFl: 99, rows: 8, facades: TEX.facade(8, { litRatio: 0.62, cols: 8 }) }
-        ];
+        const tiers = this._facadeTiers();
         const buckets = [[], [], []];
-        const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish']);
+        const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane', 'graveyard', 'billboard', 'monument', 'arena', 'black_market', 'nuclear', 'coal', 'dish', 'fusion', 'jail']);
 
         // setbacks: upper tower mass on mid/high buildings (reads as a real skyline)
         const setbacks = [];
@@ -463,12 +689,15 @@ export const World = {
             const b = p.b;
             if (b.type === 'metro') { this._buildMetroStation(p); continue; }
             if (OPEN.has(b.type)) { this._buildSpecialty(p); continue; }
-            const fl = b.fl || 3;
-            const ti = fl <= 2 ? 0 : fl <= 5 ? 1 : 2;
+            // Effective storeys from City.layout (authored fl x type multiplier).
+            // Gating on the raw b.fl is what kept fl>=10 — and therefore every
+            // setback, crown and spire below — permanently unreachable.
+            const fl = p.floors || b.fl || 3;
+            const ti = fl <= 4 ? 0 : fl <= 9 ? 1 : 2;
             // multi-tier setbacks — refined step ratios so silhouettes taper cleanly
             // (no zero-height slices, upper mass always inset enough to read)
-            if (fl >= 5 && p.h > FLOOR_H * 4) {
-                if (fl >= 10) {
+            if (fl >= 8 && p.h > FLOOR_H * 6) {
+                if (fl >= 16) {
                     // Exact partition of p.h so stacked masses never overshoot / gap.
                     // _hasStackAbove: skip parapet/plant on intermediate tops (avoids
                     // cap geometry buried inside the next setback mass).
@@ -478,7 +707,7 @@ export const World = {
                     buckets[ti].push({ ...p, h: h0, _isBase: true, _hasStackAbove: true });
                     setbacks.push({ ...p, h: h1, w: p.w * 0.74, d: p.d * 0.74, y0: h0, _isSetback: true, _hasStackAbove: true });
                     setbacks.push({ ...p, h: h2, w: p.w * 0.48, d: p.d * 0.48, y0: h0 + h1, _isSetback: true, _crown: true });
-                } else if (fl >= 8) {
+                } else if (fl >= 12) {
                     const baseH = p.h * 0.56;
                     const topH = p.h - baseH;
                     buckets[ti].push({ ...p, h: baseH, _isBase: true, _hasStackAbove: true });
@@ -509,38 +738,50 @@ export const World = {
         }
 
         const dummy = new THREE.Object3D();
-        const placeList = (list, ti, yOffset = 0) => {
-            if (!list.length) return;
+        const placeList = (all, ti, yOffset = 0) => {
+            if (!all.length) return;
             const t = tiers[ti];
-            const geo = new THREE.BoxGeometry(1, 1, 1);
-            geo.translate(0, 0.5, 0);
-            // Standard: glass-ish facade response without env maps / transmission
-            const side = new THREE.MeshStandardMaterial({
-                map: t.facades.map,
-                emissiveMap: t.facades.emissiveMap,
+            // one mesh per (tier, facade variant)
+            for (let v = 0; v < FACADE_VARIANTS; v++) {
+                const list = all.filter(p => this._variantOf(p.id || p.b?.id) === v);
+                if (!list.length) continue;
+                placeVariant(list, t, v, yOffset);
+            }
+        };
+        const placeVariant = (list, t, v, yOffset) => {
+            const facades = t.variants[v];
+            const geo = buildingBoxGeometry();
+            // Standard: glass-ish facade response, lit by the sky PMREM
+            const side = patchUVScale(new THREE.MeshStandardMaterial({
+                map: facades.map,
+                emissiveMap: facades.emissiveMap,
                 emissive: new THREE.Color(0xffe0a8),
                 emissiveIntensity: 0,
                 metalness: 0.22,
                 roughness: 0.38,
-                envMapIntensity: 0
-            });
+                vertexColors: true,
+                envMapIntensity: ENV_I
+            }));
             const roof = new THREE.MeshStandardMaterial({
                 color: 0x2a303a,
                 metalness: 0.35,
                 roughness: 0.62,
-                envMapIntensity: 0
+                vertexColors: true,
+                envMapIntensity: ENV_I
             });
             this.windowMats.push(side);
             const mats = [side, side, roof, roof, side, side];
             const im = new THREE.InstancedMesh(geo, mats, list.length);
+            im.userData.uvCols = t.cols;
             list.forEach((p, i) => {
                 dummy.position.set(p.x, (p.y0 || 0) + yOffset, p.z);
                 dummy.scale.set(p.w, p.h, p.d);
-                dummy.rotation.y = 0;
+                dummy.rotation.y = p.rot || 0;
                 dummy.updateMatrix();
                 im.setMatrixAt(i, dummy.matrix);
                 im.setColorAt(i, facadeTint(buildingColor(p.b)));
             });
+            attachUVScale(im, list, t.rows);
             im.instanceMatrix.needsUpdate = true;
             if (im.instanceColor) im.instanceColor.needsUpdate = true;
             scene.add(im);
@@ -567,6 +808,83 @@ export const World = {
         ]);
     },
 
+    /* Background city blocks (City.infill). Three instanced meshes bucketed by
+       height tier plus one instanced roof cap — the whole built fabric of the
+       city for four draw calls. Colour comes from a per-district palette so
+       walking from the Agent District into Residential actually looks like
+       crossing into a different part of town. */
+    _buildInfill(scene) {
+        const lots = City.infill || [];
+        if (!lots.length) return;
+        const tiers = this._facadeTiers();
+        const buckets = [];
+        for (let ti = 0; ti < 3; ti++) buckets.push(Array.from({ length: FACADE_VARIANTS }, () => []));
+        lots.forEach((l, i) => {
+            const ti = l.fl <= 4 ? 0 : l.fl <= 9 ? 1 : 2;
+            buckets[ti][this._variantOf(l.district + ':' + i)].push(l);
+        });
+
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+        for (let ti = 0; ti < 3; ti++) for (let v = 0; v < FACADE_VARIANTS; v++) {
+            const list = buckets[ti][v];
+            if (!list.length) continue;
+            const geo = buildingBoxGeometry();
+            const side = patchUVScale(new THREE.MeshStandardMaterial({
+                map: tiers[ti].variants[v].map,
+                emissiveMap: tiers[ti].variants[v].emissiveMap,
+                emissive: new THREE.Color(0xffe0a8),
+                emissiveIntensity: 0,
+                metalness: 0.16,
+                roughness: 0.52,
+                vertexColors: true,
+                envMapIntensity: ENV_I
+            }));
+            const roof = new THREE.MeshStandardMaterial({
+                color: 0x2b313b, metalness: 0.3, roughness: 0.7,
+                vertexColors: true, envMapIntensity: ENV_I
+            });
+            // Registered so Weather's night ramp lights these windows too —
+            // without this the background city stayed dead black after dusk
+            // while the named buildings glowed.
+            this.windowMats.push(side);
+            const im = new THREE.InstancedMesh(geo, [side, side, roof, roof, side, side], list.length);
+            im.userData.uvCols = tiers[ti].cols;
+            list.forEach((l, i) => {
+                dummy.position.set(l.x, 0, l.z);
+                dummy.scale.set(l.w, l.h, l.d);
+                dummy.rotation.y = l.rot || 0;
+                dummy.updateMatrix();
+                im.setMatrixAt(i, dummy.matrix);
+                const base = DISTRICT_TINT[l.district] || INFILL_TINT[l.biome] || '#5a6472';
+                col.set(base).offsetHSL((l.seed - 0.5) * 0.10, (l.seed - 0.5) * 0.22, (l.seed - 0.5) * 0.26);
+                im.setColorAt(i, facadeTint('#' + col.getHexString(THREE.SRGBColorSpace)));
+            });
+            attachUVScale(im, list, tiers[ti].rows);
+            im.instanceMatrix.needsUpdate = true;
+            if (im.instanceColor) im.instanceColor.needsUpdate = true;
+            scene.add(im);
+        }
+
+        // Parapet caps — the single cheapest thing that stops a box reading as
+        // a box, because it gives the roofline a lit edge against the sky.
+        const capGeo = new THREE.BoxGeometry(1, 1, 1);
+        capGeo.translate(0, 0.5, 0);
+        const caps = new THREE.InstancedMesh(capGeo,
+            new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.14, roughness: 0.78, envMapIntensity: ENV_I * 0.5 }),
+            lots.length);
+        lots.forEach((l, i) => {
+            dummy.position.set(l.x, l.h, l.z);
+            dummy.scale.set(l.w + 3.5, 3, l.d + 3.5);
+            dummy.updateMatrix();
+            caps.setMatrixAt(i, dummy.matrix);
+            caps.setColorAt(i, trimColor(DISTRICT_TINT[l.district] || INFILL_TINT[l.biome] || '#5a6472', 0.36 + l.seed * 0.1));
+        });
+        caps.instanceMatrix.needsUpdate = true;
+        if (caps.instanceColor) caps.instanceColor.needsUpdate = true;
+        scene.add(caps);
+    },
+
     /** Slim floor-plate rings at intermediate setback tops — not full parapets. */
     _buildSetbackPlates(scene, list) {
         if (!list.length) return;
@@ -575,13 +893,14 @@ export const World = {
             y: (p.y0 || 0) + p.h,
             z: p.z,
             w: p.w + 5,
-            d: p.d + 5
+            d: p.d + 5,
+            tint: buildingColor(p.b)
         }));
         const geo = new THREE.BoxGeometry(1, 1, 1);
         geo.translate(0, 0.5, 0);
         const im = new THREE.InstancedMesh(geo,
             new THREE.MeshStandardMaterial({
-                color: 0x9aa4b2, metalness: 0.3, roughness: 0.45, envMapIntensity: 0
+                color: 0xffffff, metalness: 0.26, roughness: 0.52, envMapIntensity: ENV_I * 0.8
             }), spots.length);
         const d = new THREE.Object3D();
         spots.forEach((s, i) => {
@@ -589,8 +908,10 @@ export const World = {
             d.scale.set(s.w, 2.2, s.d); // thin plate, overhangs the mass below
             d.updateMatrix();
             im.setMatrixAt(i, d.matrix);
+            im.setColorAt(i, trimColor(s.tint, 0.50));
         });
         im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
         scene.add(im);
     },
 
@@ -604,20 +925,21 @@ export const World = {
             if (h < FLOOR_H * 3) continue;
             // belt ledges — denser on tall masses; thin so they don't read as shelves
             // keep them strictly inside the mass height to avoid clipping into parapets
+            const tint = buildingColor(p.b);
             const yMid = base + p.h * 0.52;
-            spots.push({ x: p.x, y: yMid, z: p.z, w: p.w + 4.5, d: p.d + 4.5, th: 2.4 });
+            spots.push({ x: p.x, y: yMid, z: p.z, w: p.w + 4.5, d: p.d + 4.5, th: 2.4, tint });
             if (h > FLOOR_H * 5) {
-                spots.push({ x: p.x, y: base + p.h * 0.26, z: p.z, w: p.w + 3.5, d: p.d + 3.5, th: 2.1 });
+                spots.push({ x: p.x, y: base + p.h * 0.26, z: p.z, w: p.w + 3.5, d: p.d + 3.5, th: 2.1, tint });
             }
             if (h > FLOOR_H * 9) {
-                spots.push({ x: p.x, y: base + p.h * 0.76, z: p.z, w: p.w + 2.8, d: p.d + 2.8, th: 1.9 });
+                spots.push({ x: p.x, y: base + p.h * 0.76, z: p.z, w: p.w + 2.8, d: p.d + 2.8, th: 1.9, tint });
             }
         }
         if (!spots.length) return;
         const geo = new THREE.BoxGeometry(1, 1, 1);
         const im = new THREE.InstancedMesh(geo,
             new THREE.MeshStandardMaterial({
-                color: 0x8a94a4, metalness: 0.28, roughness: 0.48, envMapIntensity: 0
+                color: 0xffffff, metalness: 0.24, roughness: 0.55, envMapIntensity: ENV_I * 0.8
             }), spots.length);
         const d = new THREE.Object3D();
         spots.forEach((s, i) => {
@@ -625,8 +947,10 @@ export const World = {
             d.scale.set(s.w, s.th, s.d);
             d.updateMatrix();
             im.setMatrixAt(i, d.matrix);
+            im.setColorAt(i, trimColor(s.tint, 0.52));
         });
         im.instanceMatrix.needsUpdate = true;
+        if (im.instanceColor) im.instanceColor.needsUpdate = true;
         scene.add(im);
     },
 
@@ -676,7 +1000,7 @@ export const World = {
         capGeo.translate(0, 0.5, 0);
         const caps = new THREE.InstancedMesh(capGeo,
             new THREE.MeshStandardMaterial({
-                color: 0xa8b0bc, metalness: 0.22, roughness: 0.52, envMapIntensity: 0
+                color: 0xffffff, metalness: 0.16, roughness: 0.72, envMapIntensity: ENV_I * 0.6
             }), list.length);
         list.forEach((p, i) => {
             d.position.set(p.x, p.h, p.z);
@@ -684,21 +1008,23 @@ export const World = {
             d.scale.set(p.w + 4, CAP_H, p.d + 4);
             d.updateMatrix();
             caps.setMatrixAt(i, d.matrix);
+            caps.setColorAt(i, trimColor(buildingColor(p.b), 0.40));
         });
         caps.instanceMatrix.needsUpdate = true;
+        if (caps.instanceColor) caps.instanceColor.needsUpdate = true;
         scene.add(caps);
 
         // Crown / antenna spires on the tallest setback tops (skyline punctuation)
-        const crownList = list.filter(p => p._crown || (p.h > FLOOR_H * 10 && (p.b?.fl || 0) >= 9));
+        const crownList = list.filter(p => p._crown || (p.h > FLOOR_H * 14 && (p.floors || p.b?.fl || 0) >= 12));
         if (crownList.length) {
             const spireGeo = new THREE.BoxGeometry(1, 1, 1);
             spireGeo.translate(0, 0.5, 0);
             const spires = new THREE.InstancedMesh(spireGeo,
                 new THREE.MeshStandardMaterial({
-                    color: 0xc8d0dc, metalness: 0.55, roughness: 0.28, envMapIntensity: 0
+                    color: 0xc8d0dc, metalness: 0.55, roughness: 0.28, envMapIntensity: ENV_I
                 }), crownList.length);
             crownList.forEach((p, i) => {
-                const spireH = 22 + (p.b?.fl || 8) * 1.8;
+                const spireH = 22 + (p.floors || p.b?.fl || 8) * 1.8;
                 const spireW = Math.max(4.5, Math.min(p.w, p.d) * 0.07);
                 d.position.set(p.x, p.h + CAP_H, p.z);
                 d.scale.set(spireW, spireH, spireW);
@@ -713,12 +1039,12 @@ export const World = {
             tipGeo.translate(0, 0.5, 0);
             const tips = new THREE.InstancedMesh(tipGeo,
                 new THREE.MeshStandardMaterial({
-                    color: 0xdce4f0, metalness: 0.7, roughness: 0.22, envMapIntensity: 0
+                    color: 0xdce4f0, metalness: 0.7, roughness: 0.22, envMapIntensity: ENV_I
                 }), crownList.length);
             crownList.forEach((p, i) => {
-                const spireH = 22 + (p.b?.fl || 8) * 1.8;
+                const spireH = 22 + (p.floors || p.b?.fl || 8) * 1.8;
                 d.position.set(p.x, p.h + CAP_H + spireH, p.z);
-                d.scale.set(1.6, 12 + (p.b?.fl || 8) * 0.6, 1.6);
+                d.scale.set(1.6, 12 + (p.floors || p.b?.fl || 8) * 0.6, 1.6);
                 d.updateMatrix();
                 tips.setMatrixAt(i, d.matrix);
             });
@@ -751,7 +1077,7 @@ export const World = {
             if (!spots.length) return;
             const plant = new THREE.InstancedMesh(geo,
                 new THREE.MeshStandardMaterial({
-                    vertexColors: true, metalness: 0.3, roughness: 0.55, envMapIntensity: 0
+                    vertexColors: true, metalness: 0.3, roughness: 0.55, envMapIntensity: ENV_I
                 }), spots.length);
             spots.forEach((s, i) => {
                 d.position.set(s.x, s.y, s.z);
@@ -854,6 +1180,53 @@ export const World = {
                 }
                 break;
             }
+            case 'fusion': {
+                // Tokamak hall: a torus you can actually see through the roof
+                // lantern, ringed by cryo dewars and the neutral-beam gallery.
+                sBox(w * 0.92, 34, d * 0.92, x, 17, z, 0x8e97a4);            // plinth
+                sCyl(w * 0.40, w * 0.40, 46, 20, x, 57, z, 0xb4bcc8);        // containment drum
+                const torus = new THREE.Mesh(
+                    paint(new THREE.TorusGeometry(w * 0.26, w * 0.075, 10, 22).rotateX(Math.PI / 2), 0x3fd8e8),
+                    matVC());
+                torus.position.set(x, 74, z);
+                G.scene.add(torus);
+                A.push({ obj: torus, kind: 'tokamak' });
+                sCyl(w * 0.42, w * 0.42, 5, 20, x, 82, z, 0x6a7482);          // roof lantern ring
+                for (let i = 0; i < 6; i++) {                                  // cryo dewars
+                    const a2 = (i / 6) * Math.PI * 2;
+                    sCyl(9, 9, 30, 10, x + Math.cos(a2) * w * 0.56, 15, z + Math.sin(a2) * d * 0.56, 0xd6dce4);
+                }
+                sBox(w * 0.34, 20, 16, x, 10, z + d * 0.62, 0x707a88);        // beam gallery
+                G.colliders.push({ x0: x - w * 0.48, z0: z - d * 0.48, x1: x + w * 0.48, z1: z + d * 0.48, id: b.id });
+                break;
+            }
+            case 'jail': {
+                // Detention centre: cell block behind a perimeter wall with
+                // watchtowers and a floodlit yard. Reads as a jail from outside,
+                // which is the whole point of giving it its own building.
+                const hw = w * 0.5, hd = d * 0.5;
+                sBox(w * 0.62, 78, d * 0.42, x, 39, z - d * 0.18, 0x6a6d74);   // cell block
+                for (let f = 1; f <= 3; f++) {                                  // barred window bands
+                    sBox(w * 0.64, 3, d * 0.44, x, f * 19, z - d * 0.18, 0x33363c);
+                }
+                sBox(w * 0.30, 26, d * 0.22, x, 13, z + d * 0.24, 0x7a7e86);   // intake block
+                // perimeter wall
+                sBox(w, 26, 6, x, 13, z - hd, 0x585c63);
+                sBox(w, 26, 6, x, 13, z + hd, 0x585c63);
+                sBox(6, 26, d, x - hw, 13, z, 0x585c63);
+                sBox(6, 26, d, x + hw, 13, z, 0x585c63);
+                for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {  // watchtowers
+                    sBox(14, 46, 14, x + ox * hw, 23, z + oz * hd, 0x4e5259);
+                    sBox(20, 6, 20, x + ox * hw, 48, z + oz * hd, 0x3a3e45);
+                }
+                G.colliders.push(
+                    { x0: x - hw - 3, z0: z - hd - 3, x1: x + hw + 3, z1: z - hd + 3, id: 'jail_n' },
+                    { x0: x - hw - 3, z0: z + hd - 3, x1: x + hw + 3, z1: z + hd + 3, id: 'jail_s' },
+                    { x0: x - hw - 3, z0: z - hd, x1: x - hw + 3, z1: z + hd, id: 'jail_w' },
+                    { x0: x + hw - 3, z0: z - hd, x1: x + hw + 3, z1: z + hd, id: 'jail_e' },
+                    { x0: x - w * 0.32, z0: z - d * 0.4, x1: x + w * 0.32, z1: z + d * 0.04, id: b.id });
+                break;
+            }
             case 'coal': {
                 sBox(w * 0.7, 42, d * 0.7, x, 21, z, 0x7a6a5a);
                 sCyl(5, 6, 110, 10, x - w * 0.2, 55, z - d * 0.15, 0xa8503c);
@@ -909,8 +1282,26 @@ export const World = {
             case 'arena': {
                 sCyl(78, 84, 44, 24, x, 22, z, 0x6a5a7a);
                 sCyl(80, 80, 6, 24, x, 47, z, 0x8a7a9a);
-                sBox(70, 36, 4, x, 30, z - 78, 0x1a1a2e);                        // big screen
-                sPlaneUV(66, 32, x, 30, z - 77.5, 0, 0x2a3a5e);
+                // Jumbotron. It used to be a flat 0x1a1a2e slab with a slightly
+                // bluer quad on it, which from the street read as a hole cut out
+                // of the world. It is the LMSYS Arena — it should be showing the
+                // matchup.
+                sBox(74, 40, 4, x, 30, z - 78, 0x15161f);                        // bezel
+                // aiIndexBoard returns { texture, draw } — keep the draw handle
+                // so the jumbotron can be refreshed with live numbers later.
+                this.arenaBoard = TEX.aiIndexBoard();
+                const board = new THREE.Mesh(
+                    new THREE.PlaneGeometry(66, 32),
+                    new THREE.MeshBasicMaterial({
+                        map: this.arenaBoard.texture, toneMapped: false, fog: true
+                    }));
+                board.position.set(x, 30, z - 75.6);
+                G.scene.add(board);
+                // corner floodlights so the bowl reads as a venue at night
+                for (const ox of [-1, 1]) {
+                    sBox(5, 22, 5, x + ox * 74, 58, z - 40, 0x3a3f48);
+                    sBox(16, 5, 8, x + ox * 74, 70, z - 40, 0x22262c);
+                }
                 G.colliders.push({ x0: x - 84, z0: z - 84, x1: x + 84, z1: z + 84, id: b.id });
                 break;
             }
@@ -981,7 +1372,7 @@ export const World = {
     _buildStreetGlass(scene) {
         const OPEN = new Set(['park', 'launchpad', 'solar', 'wind', 'dam', 'crane',
             'graveyard', 'billboard', 'monument', 'arena', 'black_market',
-            'nuclear', 'coal', 'dish', 'metro']);
+            'nuclear', 'coal', 'dish', 'metro', 'fusion', 'jail']);
         const glassGeos = [];
         const frameGeos = [];
         // Tasteful glass: light cyan, low opacity, slight metal sheen — not black slabs
@@ -990,12 +1381,12 @@ export const World = {
             metalness: 0.35,
             roughness: 0.1,
             transparent: true,
-            opacity: 0.2,
+            opacity: 0.22,
             depthWrite: false,
             side: THREE.DoubleSide,
             emissive: new THREE.Color(0x204860),
             emissiveIntensity: 0.1,
-            envMapIntensity: 0
+            envMapIntensity: ENV_I * 2.2
         });
         for (const p of G.placements) {
             if (OPEN.has(p.b.type)) continue;
@@ -1061,137 +1452,142 @@ export const World = {
         if (frameGeos.length) {
             const frameMesh = new THREE.Mesh(mergeGeometries(frameGeos, false),
                 new THREE.MeshStandardMaterial({
-                    vertexColors: true, metalness: 0.55, roughness: 0.35, envMapIntensity: 0
+                    vertexColors: true, metalness: 0.55, roughness: 0.35, envMapIntensity: ENV_I
                 }));
             frameMesh.matrixAutoUpdate = false;
             scene.add(frameMesh);
         }
     },
-    // ── SIGNS (single atlas, single mesh) ────────────────────────────────────
+    // ── SIGNS (one atlas, three draw calls) ──────────────────────────────────
     _buildSigns(scene) {
-        // Fixed facade signs — NO camera lookAt (that made boards float and spin in the street).
-        // Each building gets a plate flush on the street-facing wall.
+        /* Fixed facade signs — no camera lookAt, which is what used to make the
+           boards float and spin in the street. Each building gets a plate flush
+           on its street-facing wall.
+
+           All of them share ONE atlas texture and ONE merged quad geometry. The
+           previous version built a dedicated 512x128 DataTexture and three
+           separate meshes per building: ~130 textures (~34 MB), ~130 blocking
+           GPU uploads during boot, and ~390 draw calls for signage in a
+           renderer whose whole budget is 150. */
         const NO_SIGN = new Set(['park', 'launchpad', 'crane', 'graveyard', 'billboard',
             'monument', 'solar', 'wind', 'dam']);
 
-        this.signMeshes = [];
-        const group = new THREE.Group();
-        group.name = 'buildingSigns';
-        let count = 0;
-
-        // Always face the nearest road (outward), never district centre (that stuck
-        // opposite embassies into the middle of the carriageway).
+        // Always face the nearest road (outward), never the district centre —
+        // that stuck signs on opposite embassies into the middle of the road.
+        const axs = (City.avenueXs || []).concat(City.ringX || []);
+        const zss = (City.streetZs || []).concat(City.ringZ || []);
         const faceFor = (p) => {
-            const axs = (City.avenueXs || []).concat(City.ringX || []);
-            const zss = (City.streetZs || []).concat(City.ringZ || []);
             let bestAx = axs[0] ?? 0, bestAd = Infinity;
-            for (const ax of axs) {
-                const d = Math.abs(p.x - ax);
-                if (d < bestAd) { bestAd = d; bestAx = ax; }
-            }
+            for (const ax of axs) { const d = Math.abs(p.x - ax); if (d < bestAd) { bestAd = d; bestAx = ax; } }
             let bestSz = zss[0] ?? 0, bestZd = Infinity;
-            for (const sz of zss) {
-                const d = Math.abs(p.z - sz);
-                if (d < bestZd) { bestZd = d; bestSz = sz; }
-            }
-            let nx = 0, nz = 0, ang = 0;
+            for (const sz of zss) { const d = Math.abs(p.z - sz); if (d < bestZd) { bestZd = d; bestSz = sz; } }
             if (bestAd <= bestZd) {
-                nx = Math.sign(bestAx - p.x) || 1;
-                nz = 0;
-                ang = nx > 0 ? Math.PI / 2 : -Math.PI / 2;
-            } else {
-                nx = 0;
-                nz = Math.sign(bestSz - p.z) || 1;
-                ang = nz > 0 ? 0 : Math.PI;
+                const nx = Math.sign(bestAx - p.x) || 1;
+                return { nx, nz: 0, ang: nx > 0 ? Math.PI / 2 : -Math.PI / 2 };
             }
-            return { nx, nz, ang };
+            const nz = Math.sign(bestSz - p.z) || 1;
+            return { nx: 0, nz, ang: nz > 0 ? 0 : Math.PI };
         };
 
+        const signColor = (b) => (b.lab && LABS[b.lab]) ? LABS[b.lab].color
+            : b.type === 'black_market' ? '#f472b6'
+            : b.type === 'bar' ? '#e879f9'
+            : b.type === 'coal' || b.type === 'nuclear' ? '#fbbf24'
+            : b.type === 'newspaper' ? '#fbbf24'
+            : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
+            : '#22d3ee';
+
+        // ── pass 1: work out every sign's placement and atlas entry ──
+        const signs = [];
         for (const p of G.placements) {
             const b = p.b;
             if (!b || NO_SIGN.has(b.type)) continue;
-
-            const color = (b.lab && LABS[b.lab]) ? LABS[b.lab].color
-                : b.type === 'black_market' ? '#f472b6'
-                : b.type === 'bar' ? '#e879f9'
-                : b.type === 'coal' || b.type === 'nuclear' ? '#fbbf24'
-                : b.type === 'newspaper' ? '#fbbf24'
-                : b.type === 'embassy' || b.type === 'villa' ? '#38bdf8'
-                : '#22d3ee';
-            const label = b.id === 'black_market' ? 'THE UNDERGROUND'
-                : String(b.name || b.id || 'BUILDING');
-
             const { nx, nz, ang } = faceFor(p);
             const faceW = nx !== 0 ? p.d : p.w;
             const halfOut = nx !== 0 ? p.w / 2 : p.d / 2;
-            // Modest size — hung on the wall, not a highway gantry
+            // Hung on the wall, not a highway gantry
             const sw = Math.min(Math.max(faceW * 0.42, 40), Math.min(faceW * 0.75, 88));
             const sh = Math.max(14, Math.min(sw / 3.8, 24));
-            const gap = 2.8; // almost flush
-            const bx = p.x + nx * (halfOut + gap + 0.6);
-            const bz = p.z + nz * (halfOut + gap + 0.6);
-            const mountY = Math.min(
-                Math.max(FLOOR_H * 1.25, 28),
-                Math.min((p.h || 40) * 0.38, 42)
-            );
+            const gap = 2.8;
+            signs.push({
+                id: b.id,
+                text: b.id === 'black_market' ? 'THE UNDERGROUND' : String(b.name || b.id || 'BUILDING'),
+                color: signColor(b),
+                nx, nz, ang, sw, sh,
+                bx: p.x + nx * (halfOut + gap + 0.6),
+                bz: p.z + nz * (halfOut + gap + 0.6),
+                y: Math.min(Math.max(FLOOR_H * 1.25, 28), Math.min((p.h || 40) * 0.38, 42))
+            });
+        }
+        if (!signs.length) { this.signCount = 0; return; }
 
-            let map;
-            try {
-                map = TEX.makeSignPlate(label, color, '');
-                if (G.renderer) { try { G.renderer.initTexture(map); } catch (_) {} }
-            } catch (e) {
-                console.warn('[signs] makeSignPlate failed', b.id, e);
-                continue;
+        const atlas = TEX.signAtlas(signs);
+
+        // ── pass 2: one merged quad mesh for the text plates ──
+        const plateGeos = [];
+        for (const s of signs) {
+            const g = new THREE.PlaneGeometry(s.sw, s.sh);
+            const uvA = g.attributes.uv;
+            const r = atlas.uv.get(s.id);
+            for (let i = 0; i < uvA.count; i++) {
+                uvA.setXY(i,
+                    r.u0 + uvA.getX(i) * (r.u1 - r.u0),
+                    r.v0 + uvA.getY(i) * (r.v1 - r.v0));
             }
-
-            // Housing box flush on wall (dark, not brand-colour)
-            const housing = new THREE.Mesh(
-                new THREE.BoxGeometry(sw + 3, sh + 3, 3),
-                new THREE.MeshStandardMaterial({ color: 0x0c1018, metalness: 0.3, roughness: 0.55 })
-            );
-            housing.position.set(bx - nx * 0.5, mountY, bz - nz * 0.5);
-            housing.rotation.y = ang;
-            group.add(housing);
-
-            // Thin accent bar under sign
-            const bar = new THREE.Mesh(
-                new THREE.BoxGeometry(sw + 3, 1.4, 2.2),
-                new THREE.MeshStandardMaterial({
-                    color: new THREE.Color(color),
-                    metalness: 0.2,
-                    roughness: 0.45,
-                    emissive: new THREE.Color(color),
-                    emissiveIntensity: 0.25
-                })
-            );
-            bar.position.set(bx - nx * 0.3, mountY - sh / 2 - 2, bz - nz * 0.3);
-            bar.rotation.y = ang;
-            group.add(bar);
-
-            // Text plate fixed to facade (FrontSide outward only)
-            const mat = new THREE.MeshBasicMaterial({
-                map,
-                color: 0xffffff,
+            g.rotateY(s.ang);
+            g.translate(s.bx + s.nx * 1.1, s.y, s.bz + s.nz * 1.1);
+            plateGeos.push(g);
+        }
+        const plates = new THREE.Mesh(mergeGeometries(plateGeos, false),
+            new THREE.MeshBasicMaterial({
+                map: atlas.texture,
                 side: THREE.FrontSide,
                 toneMapped: false,
-                transparent: false,
-                depthWrite: true,
-                fog: false
-            });
-            const plate = new THREE.Mesh(new THREE.PlaneGeometry(sw, sh), mat);
-            // sit just outside housing front
-            plate.position.set(bx + nx * 1.1, mountY, bz + nz * 1.1);
-            plate.rotation.y = ang;
-            plate.renderOrder = 2;
-            group.add(plate);
+                // Signs used to opt out of fog, so a board 2 km down the avenue
+                // punched through the haze at full brightness like a sticker on
+                // the lens. They are part of the city; they fade with it.
+                fog: true
+            }));
+        plates.matrixAutoUpdate = false;
+        plates.renderOrder = 2;
+        plates.name = 'signPlates';
+        scene.add(plates);
 
-            count++;
-        }
+        // ── pass 3: housings and accent bars, one InstancedMesh each ──
+        const unit = new THREE.BoxGeometry(1, 1, 1);
+        const housings = new THREE.InstancedMesh(unit,
+            new THREE.MeshStandardMaterial({ color: 0x0c1018, metalness: 0.3, roughness: 0.55, envMapIntensity: ENV_I * 0.4 }),
+            signs.length);
+        const barGeo = new THREE.BoxGeometry(1, 1, 1);
+        const barMat = new THREE.MeshStandardMaterial({
+            color: 0xffffff, metalness: 0.2, roughness: 0.45,
+            emissive: new THREE.Color(0xffffff), emissiveIntensity: 0.35, envMapIntensity: ENV_I * 0.4
+        });
+        const bars = new THREE.InstancedMesh(barGeo, barMat, signs.length);
+        const d = new THREE.Object3D();
+        const c = new THREE.Color();
+        signs.forEach((s, i) => {
+            d.position.set(s.bx - s.nx * 0.5, s.y, s.bz - s.nz * 0.5);
+            d.rotation.set(0, s.ang, 0);
+            d.scale.set(s.sw + 3, s.sh + 3, 3);
+            d.updateMatrix();
+            housings.setMatrixAt(i, d.matrix);
 
-        scene.add(group);
-        this.signGroup = group;
-        this.signCount = count;
-        console.log('[SC-FP] building signs (fixed facade):', count);
+            d.position.set(s.bx - s.nx * 0.3, s.y - s.sh / 2 - 2, s.bz - s.nz * 0.3);
+            d.scale.set(s.sw + 3, 1.4, 2.2);
+            d.updateMatrix();
+            bars.setMatrixAt(i, d.matrix);
+            bars.setColorAt(i, c.set(s.color));
+        });
+        housings.instanceMatrix.needsUpdate = true;
+        bars.instanceMatrix.needsUpdate = true;
+        if (bars.instanceColor) bars.instanceColor.needsUpdate = true;
+        scene.add(housings, bars);
+
+        this.signPlates = plates;
+        this.signBarMat = barMat;
+        this.signCount = signs.length;
+        console.log('[SC-FP] building signs (atlas):', signs.length, '- 3 draw calls');
     },
 
 
@@ -1248,18 +1644,36 @@ export const World = {
         if (cans.instanceColor) cans.instanceColor.needsUpdate = true;
         scene.add(trunks, cans);
 
-        // Street lamps along avenues/streets
+        /* Street lamps down BOTH pavements of every avenue and street.
+           They used to be 34 units — 3.4 m — tall, with a single unlit sphere on
+           top and nothing else: at night the sphere turned white and that was
+           the entire lighting contribution to the surface city. No glow, no
+           pool of light on the ground, and marble-sized lamps at chest height.
+           Real street lamps are 8-10 m, so 88 units, and the two things that
+           actually sell a night street — a halo around the lamp and a pool
+           under it — are added below for two extra draw calls and no lights. */
+        const LAMP_H = 88;
         const lampSpots = [];
-        for (const ax of City.avenueXs) for (let z = -CITY_D / 2 + 80; z < CITY_D / 2; z += 260)
-            lampSpots.push({ x: ax + 78, z });
-        for (const sz of City.streetZs) for (let x = -CITY_W / 2 + 80; x < CITY_W / 2; x += 260)
-            lampSpots.push({ x, z: sz + 78 });
-        const poleGeo = new THREE.CylinderGeometry(1.4, 1.8, 34, 5);
-        poleGeo.translate(0, 17, 0);
-        const headGeo = new THREE.SphereGeometry(3, 6, 5);
-        headGeo.translate(0, 35, 0);
-        const poles = new THREE.InstancedMesh(poleGeo, new THREE.MeshLambertMaterial({ color: 0x333a44 }), lampSpots.length);
-        this.lampHeadMat = new THREE.MeshBasicMaterial({ color: 0x2a2a2a });
+        for (const ax of City.avenueXs) {
+            for (let z = -CITY_D / 2 + 80; z < CITY_D / 2; z += 230) {
+                lampSpots.push({ x: ax + 79, z }, { x: ax - 79, z: z + 115 });
+            }
+        }
+        for (const sz of City.streetZs) {
+            for (let x = -CITY_W / 2 + 80; x < CITY_W / 2; x += 230) {
+                lampSpots.push({ x, z: sz + 79 }, { x: x + 115, z: sz - 79 });
+            }
+        }
+        const poleGeo = mergeGeometries([
+            new THREE.CylinderGeometry(1.5, 2.6, LAMP_H, 6).translate(0, LAMP_H / 2, 0),
+            new THREE.CylinderGeometry(4.5, 3, 3, 8).translate(0, LAMP_H + 1.5, 0)   // luminaire hood
+        ], false);
+        const headGeo = new THREE.SphereGeometry(3.4, 8, 6);
+        headGeo.translate(0, LAMP_H - 1.2, 0);
+        const poles = new THREE.InstancedMesh(poleGeo,
+            new THREE.MeshStandardMaterial({ color: 0x2f353f, metalness: 0.4, roughness: 0.6, envMapIntensity: ENV_I }),
+            lampSpots.length);
+        this.lampHeadMat = new THREE.MeshBasicMaterial({ color: 0x2a2a2a, toneMapped: false });
         const heads = new THREE.InstancedMesh(headGeo, this.lampHeadMat, lampSpots.length);
         lampSpots.forEach((l, i) => {
             dummy.position.set(l.x, 0, l.z);
@@ -1268,6 +1682,7 @@ export const World = {
             heads.setMatrixAt(i, dummy.matrix);
         });
         scene.add(poles, heads);
+        this._buildLampLight(scene, lampSpots, LAMP_H);
 
         // Benches (park districts + public square)
         const benchSpots = [];
@@ -1467,6 +1882,53 @@ export const World = {
         }
     },
 
+    /* The two halves of a lit street lamp, both free of actual lights:
+       a camera-facing halo (one Points cloud) and a pool of light on the
+       pavement (one InstancedMesh of additive discs). Weather ramps both with
+       `night`, so they cost nothing by day. */
+    _buildLampLight(scene, spots, lampH) {
+        const pos = new Float32Array(spots.length * 3);
+        spots.forEach((l, i) => {
+            pos[i * 3] = l.x; pos[i * 3 + 1] = lampH - 1; pos[i * 3 + 2] = l.z;
+        });
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+        this.lampGlowMat = new THREE.PointsMaterial({
+            map: TEX.glowSprite('rgba(255,226,160,1)'),
+            // 92 was far too wide: two lamps near the camera filled the frame
+            // with white, and a receding avenue of them stacked additively into
+            // a blown-out wall at the vanishing point.
+            color: 0xffffff, size: 54, sizeAttenuation: true,
+            transparent: true, opacity: 0, depthWrite: false,
+            blending: THREE.AdditiveBlending, fog: false, toneMapped: false
+        });
+        const halo = new THREE.Points(g, this.lampGlowMat);
+        halo.name = 'lampGlow';
+        halo.renderOrder = 3;
+        scene.add(halo);
+
+        // Ground pool. A flat disc rather than a decal projector — the pavement
+        // is flat here, so the cheap version is indistinguishable.
+        const disc = new THREE.CircleGeometry(58, 16);
+        disc.rotateX(-Math.PI / 2);
+        this.lampPoolMat = new THREE.MeshBasicMaterial({
+            map: TEX.glowSprite('rgba(255,214,150,1)'),
+            transparent: true, opacity: 0, depthWrite: false,
+            blending: THREE.AdditiveBlending, fog: false, toneMapped: false
+        });
+        const pools = new THREE.InstancedMesh(disc, this.lampPoolMat, spots.length);
+        pools.name = 'lampPool';
+        pools.renderOrder = 3;
+        const d = new THREE.Object3D();
+        spots.forEach((l, i) => {
+            d.position.set(l.x, 2.4, l.z);
+            d.updateMatrix();
+            pools.setMatrixAt(i, d.matrix);
+        });
+        pools.instanceMatrix.needsUpdate = true;
+        scene.add(pools);
+    },
+
     // ── WATER + BEACH ────────────────────────────────────────────────────────
     _buildWater(scene) {
         this.waterTex = TEX.water();
@@ -1476,6 +1938,7 @@ export const World = {
         );
         w.rotation.x = -Math.PI / 2;
         w.position.set(SEA_X - 2900, -0.6, 0);
+        w.name = 'water';
         scene.add(w);
         // beach
         const beach = new THREE.Mesh(
@@ -1513,14 +1976,18 @@ export const World = {
         const geo = new THREE.ConeGeometry(1, 1, 7);
         geo.translate(0, 0.5, 0);
         const spots = [];
+        // Pushed out with the city: the grid is 5x5 now, so its half-diagonal
+        // reaches ~3400 and hills at the old 3900 would have stood in the
+        // outskirts rather than on the horizon.
         for (let i = 0; i < 42 && spots.length < 42; i++) {
             const a = (i / 42) * Math.PI * 2 + rng() * 0.12;
-            const r = 3900 + rng() * 1400;
+            const r = 4700 + rng() * 1500;
             const hx = Math.cos(a) * r + 1200;
             if (hx < SEA_X + 200) continue;   // keep the hills out of the sea
             spots.push({ x: hx, z: Math.sin(a) * r });
         }
         const hills = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0x33402e }), spots.length);
+        hills.name = 'hills';
         const dummy = new THREE.Object3D();
         spots.forEach((s, i) => {
             dummy.position.set(s.x, -4, s.z);
@@ -1532,11 +1999,75 @@ export const World = {
         scene.add(hills);
     },
 
+    /* Point the sun at the player and park the shadow frustum on them.
+       `dir` is the unit vector FROM the sun TOWARDS the ground, supplied by
+       Weather so the shadow direction always matches the visible sun arc.
+       The frustum centre is snapped to whole shadow texels in light space —
+       without that, sub-texel movement makes every shadow edge crawl and
+       sparkle as you walk, which looks far worse than no shadows at all. */
+    aimSun(dirX, dirY, dirZ, focusX, focusZ) {
+        _sDir.set(dirX, dirY, dirZ);
+        if (_sDir.lengthSq() < 1e-6) _sDir.set(-0.5, -0.8, -0.3);
+        _sDir.normalize();
+        _sTmp.set(focusX, 0, focusZ);
+
+        if (this.shadows) {
+            const R = G.preset.shadowRadius;
+            const texel = (2 * R) / G.preset.shadowMap;
+            // orthonormal light basis (guard against dir ≈ straight down)
+            _sRight.crossVectors(_sDir, _sUpRef);
+            if (_sRight.lengthSq() < 1e-6) _sRight.set(1, 0, 0);
+            _sRight.normalize();
+            _sUp.crossVectors(_sRight, _sDir).normalize();
+            const px = Math.round(_sTmp.dot(_sRight) / texel) * texel;
+            const py = Math.round(_sTmp.dot(_sUp) / texel) * texel;
+            const pz = _sTmp.dot(_sDir);
+            _sTmp.set(0, 0, 0)
+                .addScaledVector(_sRight, px)
+                .addScaledVector(_sUp, py)
+                .addScaledVector(_sDir, pz);
+        }
+
+        this.sunTarget.position.copy(_sTmp);
+        this.sunTarget.updateMatrixWorld();
+        this.sun.position.copy(_sTmp).addScaledVector(_sDir, -SHADOW_DIST);
+    },
+
+    /* Turn casting/receiving on across the finished scene. Called once, after
+       every system has added its objects, so citizens/traffic/props are covered
+       too. Sky, weather particles, water, wires and the far hills are skipped:
+       they either can't sensibly cast (sprites/points/lines) or the cost is
+       real and the payoff is nil at that distance. */
+    finalizeShadows(scene) {
+        if (!this.shadows) return;
+        const SKIP = new Set(['sky', 'stars', 'water', 'hills', 'aurora', 'precip']);
+        scene.traverse(o => {
+            if (!o.isMesh && !o.isInstancedMesh) return;
+            if (o.isSprite || o.isPoints || o.isLine || o.isLineSegments) return;
+            if (SKIP.has(o.name)) return;
+            if (o.userData.noShadow) return;
+            const mats = Array.isArray(o.material) ? o.material : [o.material];
+            const m0 = mats[0];
+            if (!m0) return;
+            // Ground-ish and grass: receive only. Casting from a 30 000-instance
+            // grass field costs a fortune and produces noise, not shape.
+            const receiveOnly = o.userData.shadowReceiveOnly === true;
+            // Unlit basic surfaces (signs, neon, glow plates) don't shade, so a
+            // shadow on them reads as a dirt smear — cast, but don't receive.
+            const unlit = mats.every(m => m && m.isMeshBasicMaterial);
+            const seeThrough = mats.some(m => m && m.transparent && (m.opacity ?? 1) < 0.5);
+            o.castShadow = !receiveOnly && !seeThrough;
+            o.receiveShadow = !unlit;
+        });
+        this.shadowsReady = true;
+    },
+
     // ── per-frame ────────────────────────────────────────────────────────────
     update(dt, t) {
         for (const a of this.animated) {
             switch (a.kind) {
                 case 'turbine': a.obj.rotation.z += dt * a.speed * (1 + G.weatherIntensity * 2); break;
+                case 'tokamak': a.obj.rotation.y += dt * 0.35; break;
                 case 'dish': a.obj.rotation.z = Math.sin(t * 0.12 + a.phase) * 0.35; break;
                 case 'trolley': a.obj.position.z = a.cz - 30 + Math.sin(t * 0.25 + a.phase) * 30; break;
                 case 'fountain': a.obj.position.y = 6.5 + Math.sin(t * 2.2) * 0.35; break;
