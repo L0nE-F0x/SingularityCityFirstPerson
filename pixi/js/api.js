@@ -327,7 +327,9 @@ const API = {
                 }
             }
         } catch (_e) { /* ignore */ }
-        out.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+        // Cloud `ts` is often a number (epoch ms); local rows may use a time string.
+        // Always coerce before localeCompare so mixed shapes never throw.
+        out.sort((a, b) => String(b.ts ?? '').localeCompare(String(a.ts ?? '')));
         return out;
     },
 

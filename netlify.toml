@@ -5,6 +5,10 @@
   publish = "."
   command = "echo Static integrated site - no build required"
 
+[functions]
+  directory = "pixi/netlify/functions"
+  node_bundler = "esbuild"
+
 # Prefer 2D as the site entry (production-like flow).
 # force=true so root index.html (FP) is not served at "/".
 # FP remains available at /index.html (toolbar link from 2D uses that path).
@@ -14,7 +18,32 @@
   status = 302
   force = true
 
-# CORS / API proxies (same as production 2D) so /pixi works on this host
+# Root icons (browser / SW sometimes request these without the /pixi/ prefix)
+[[redirects]]
+  from = "/favicon.ico"
+  to = "/pixi/favicon.ico"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/favicon-32.png"
+  to = "/pixi/favicon-32.png"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/icon-192.png"
+  to = "/pixi/icon-192.png"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/icon-512.png"
+  to = "/pixi/icon-512.png"
+  status = 200
+  force = true
+
+# CORS / API proxies (same as production 2D)
 [[redirects]]
   from = "/api/hf/*"
   to = "https://huggingface.co/api/:splat"
@@ -42,6 +71,18 @@
 [[redirects]]
   from = "/api/celestrak/*"
   to = "https://celestrak.org/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/orbit-sats"
+  to = "/.netlify/functions/orbit-sats"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/geo"
+  to = "/.netlify/functions/geo"
   status = 200
   force = true
 
