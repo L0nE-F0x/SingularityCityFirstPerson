@@ -22,9 +22,11 @@ import { PRESS } from './press.js';
 import { LEGACY } from './legacy.js';
 import { BACKBONE } from './backbone.js';
 import { AGENT_ROOMS, agentRoom } from './agents.js';
+import { ROBOTICS_ROOMS, roboticsRoom } from './robotics.js';
+import { LONGEVITY_ROOMS, longevityRoom } from './longevity.js';
 
 export const ROOM_SPECS = [BAR, UNDERGROUND, METRO, EMBASSY, VILLA, ALIGNMENT, PRESS, LEGACY, BACKBONE,
-    ...Object.values(AGENT_ROOMS)];
+    ...Object.values(AGENT_ROOMS), ...Object.values(ROBOTICS_ROOMS), ...Object.values(LONGEVITY_ROOMS)];
 
 /** Which bespoke layout (if any) this building should use. */
 export function resolveRoom(b) {
@@ -41,6 +43,10 @@ export function resolveRoom(b) {
     if (id.startsWith('backbone_') || t === 'backbone') return BACKBONE;
     // Agent District: one spec per building, since their storey lists differ.
     if (id.startsWith('agents_') || t === 'agents') return agentRoom(b);
+    // Robotics Quarter: likewise — assembly is six storeys, testing is four.
+    if (id.startsWith('robotics_') || t === 'robotics' || b.district === 'robotics') return roboticsRoom(b);
+    // Longevity Wing: five buildings, five different research stacks.
+    if (id.startsWith('longevity_') || t === 'longevity' || b.district === 'longevity') return longevityRoom(b);
     return null;
 }
 

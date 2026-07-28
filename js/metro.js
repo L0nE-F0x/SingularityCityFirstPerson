@@ -536,7 +536,7 @@ export const Metro = {
         if (t.dwellT < 3.5) t.dwellT = 3.5;
 
         if (G.inside && G.interior) {
-            try { G.interior.exit(); } catch (_) { /* */ }
+            try { G.interior.exit(true); } catch (_) { /* */ }   // teardown, not a doorway
         }
 
         this._rideSaved = {

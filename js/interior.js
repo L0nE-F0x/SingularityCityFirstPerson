@@ -14,16 +14,44 @@
    ══════════════════════════════════════════════════════════════════════════ */
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { G } from './state.js';
+import { G, EYE_H } from './state.js';
 import { LABS } from './data.js';
 import * as TEX from './textures.js';
 import { resolveRoom, floorLabel } from './interiors/rooms.js';
 import { seeded, P as PROP } from './interiors/kit.js';
 
 export const FLOOR_Y = -4000;          // where interiors live
+
+/* Interiors were authored roughly 3x human scale and it showed: a 9.6 m
+   ceiling, a 9 m wide doorway and a 6.2 m door opening around a 1.7 m player,
+   which read as being an ant in a normal building. The exterior disagreed too —
+   a storey outside is FLOOR_H 24 (2.4 m), so inside and outside were 4x apart.
+
+   Rather than re-author every prop position in this file and in every bespoke
+   room under js/interiors/, the whole interior group is scaled by ROOM_SCALE
+   and the few places where interior-local units meet WORLD units (colliders,
+   teleports, proximity checks) convert through `S()`. At 1/3 the numbers land
+   where they should: 3.2 m ceiling, 2.07 m door opening, 1.2 m handrails. */
+export const ROOM_SCALE = 1 / 3;
+const S = (v) => v * ROOM_SCALE;
+
 const ROOM_W = 560, ROOM_D = 460, ROOM_H = 96;
 const WALL = 12;                        // wall thickness
 const DOOR_W = 90;
+
+/* The working lift car. The bank draws three sets of doors for looks, but one
+   of them is a real room you stand inside while it travels — which is the only
+   way a floor change reads as a journey rather than a teleport. */
+const CAR_LZ = -120;          // which of the three bays is the live car
+const CAR_HALF = 30;          // half-width of the mouth, in z
+const CAR_DEPTH = 96;         // how far the car extends behind the wall plane
+const CAR_H = 78;             // car ceiling (26 world units ≈ 2.6 m)
+const LIFT_WX = -ROOM_W / 2 + WALL / 2;   // the wall plane the doors sit in
+const CAR_BACK = LIFT_WX - CAR_DEPTH;
+const CAR_CX = LIFT_WX - CAR_DEPTH / 2;   // car centre, where the rider stands
+const DOOR_SECS = 1.1;        // open / close time
+const RIDE_PER_FLOOR = 1.15;  // travel seconds per storey
+const RIDE_MIN = 1.8, RIDE_MAX = 5.5;
 
 function paint(geo, hex) {
     const c = new THREE.Color(hex);
@@ -45,10 +73,14 @@ export const Interior = {
     _savedColliders: null,
     _exit: { x: 0, z: ROOM_D / 2 - 40 },
     _liftZones: [],
+    // doors: 1 = fully open, 0 = shut. phase drives the ride state machine.
+    _lift: { phase: 'idle', t: 0, doors: 1, from: 0, to: 0, dur: 0 },
+    _carParts: null,
 
     init(scene) {
         this.group = new THREE.Group();
         this.group.position.set(0, FLOOR_Y, 0);
+        this.group.scale.setScalar(ROOM_SCALE);
         this.group.visible = false;
         scene.add(this.group);
         // warm fill for interiors (tinted per-theme on enter/build)
@@ -223,7 +255,20 @@ export const Interior = {
         // ceiling
         box(ROOM_W, 4, ROOM_D, 0, ROOM_H, 0, th.ceil);
         // walls — front wall is split either side of the doorway
-        box(WALL, ROOM_H, ROOM_D, -ROOM_W / 2, ROOM_H / 2, 0, th.wall);
+        /* Left wall. When there is a working lift the wall has to be cut open
+           at the car mouth — the collider was already split there, but the
+           GEOMETRY was not, so riders stood inside the car staring at the back
+           face of a solid wall instead of at the doors. */
+        if (this.maxFloor > 0) {
+            const zA0 = -ROOM_D / 2, zA1 = CAR_LZ - CAR_HALF;
+            const zB0 = CAR_LZ + CAR_HALF, zB1 = ROOM_D / 2;
+            box(WALL, ROOM_H, zA1 - zA0, -ROOM_W / 2, ROOM_H / 2, (zA0 + zA1) / 2, th.wall);
+            box(WALL, ROOM_H, zB1 - zB0, -ROOM_W / 2, ROOM_H / 2, (zB0 + zB1) / 2, th.wall);
+            // lintel over the opening
+            box(WALL, ROOM_H - CAR_H, CAR_HALF * 2, -ROOM_W / 2, CAR_H + (ROOM_H - CAR_H) / 2, CAR_LZ, th.wall);
+        } else {
+            box(WALL, ROOM_H, ROOM_D, -ROOM_W / 2, ROOM_H / 2, 0, th.wall);
+        }
         box(WALL, ROOM_H, ROOM_D, ROOM_W / 2, ROOM_H / 2, 0, th.wall);
         box(ROOM_W, ROOM_H, WALL, 0, ROOM_H / 2, -ROOM_D / 2, th.wall);
         const sideW = (ROOM_W - DOOR_W) / 2;
@@ -262,6 +307,10 @@ export const Interior = {
             this._dress(b, box, lit, th, accent, floorIdx);
             if (typeof this._enrichRoom === 'function') this._enrichRoom(box, lit, th, accent, floorIdx);
         }
+        // The car is live geometry (its doors slide), so it is built after the
+        // merged shell rather than into it.
+        this._buildCar(th, accent);
+
         // lift bank + street doorway are shared furniture: every room, bespoke
         // or generic, needs them for the F / 0–9 / E contract to stay honest.
         this._liftBank(box, lit, accent);
@@ -339,7 +388,14 @@ export const Interior = {
         // colliders, in interior-local coords offset to world
         this._colliders = [];
         const wall = (x0, z0, x1, z1) => this._colliders.push({ x0, z0, x1, z1 });
-        wall(-ROOM_W / 2 - 20, -ROOM_D / 2 - 20, -ROOM_W / 2 + WALL / 2, ROOM_D / 2 + 20);
+        // Left wall — split around the car mouth when there is a working lift,
+        // otherwise the player can never step into the car.
+        if (this.maxFloor > 0) {
+            wall(-ROOM_W / 2 - 20, -ROOM_D / 2 - 20, LIFT_WX, CAR_LZ - CAR_HALF);
+            wall(-ROOM_W / 2 - 20, CAR_LZ + CAR_HALF, LIFT_WX, ROOM_D / 2 + 20);
+        } else {
+            wall(-ROOM_W / 2 - 20, -ROOM_D / 2 - 20, LIFT_WX, ROOM_D / 2 + 20);
+        }
         wall(ROOM_W / 2 - WALL / 2, -ROOM_D / 2 - 20, ROOM_W / 2 + 20, ROOM_D / 2 + 20);
         wall(-ROOM_W / 2 - 20, -ROOM_D / 2 - 20, ROOM_W / 2 + 20, -ROOM_D / 2 + WALL / 2);
         for (const s of [-1, 1]) {
@@ -1049,30 +1105,261 @@ export const Interior = {
         return !NO.has(b.type);
     },
 
-    setFloor(n) {
+    /* Public entry point: F / 0-9 / E all ride the lift now. Kept as setFloor
+       so existing callers keep working, but a floor change is a journey. */
+    setFloor(n) { this.rideElevator(n); },
+
+    /** Jump to a floor with no ride — boot params (`?inside=`), tests, and any
+     *  caller that wants the room without the journey. */
+    setFloorInstant(n) { this._setFloor(n); },
+
+    /** Rebuild the room for floor `n` with no ride. Used by the ride itself
+     *  once the car has arrived, and by setFloorInstant. */
+    _setFloor(n) {
         if (!this.building) return;
         const f = Math.max(0, Math.min(this.maxFloor, n | 0));
         if (f === this.floor && this.group.children.length > 2) return;
         const from = this.floor;
         this._build(this.building, f);
-        G.colliders = this._colliders.map(c => ({ x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1 }));
-        // arrive near the lift bank after a ride (not the street door)
-        const nearLift = this._liftZones[0];
-        if (nearLift) G.player.teleport(nearLift.x + 30, nearLift.z, Math.PI / 2);
-        else G.player.teleport(0, ROOM_D / 2 - 70, 0);
-        const top = f === this.maxFloor ? ' · TOP' : '';
-        const plat = this.building.type === 'metro' && f === this.maxFloor ? ' · platform — board trains with E' : '';
-        G.ui?.banner?.(`🛗 Floor ${f}/${this.maxFloor}${top}`, `elevator${plat || (this.maxFloor ? ' · 0–9 jump · F next' : '')}`);
-        G.audio?.sfx?.(f > from ? 'open' : 'close');
+        G.colliders = this._colliders.map(c => ({ x0: S(c.x0), x1: S(c.x1), z0: S(c.z0), z1: S(c.z1) }));
+        /* If this rebuild is the arrival half of a ride, the player is inside
+           the car and must stay there — the doors have not opened yet. Only a
+           direct (test / boot-param) floor set drops them at the bank. */
+        if (this._lift.phase === 'moving') {
+            const spot = this.carSpot();
+            G.player.teleport(spot.x, spot.z, Math.PI / 2);
+            this._sealCar(true);
+        } else {
+            const nearLift = this._liftZones[0];
+            if (nearLift) G.player.teleport(S(nearLift.x + 30), S(nearLift.z), Math.PI / 2);
+            else G.player.teleport(0, S(ROOM_D / 2 - 70), 0);
+            const top = f === this.maxFloor ? ' · TOP' : '';
+            const plat = this.building.type === 'metro' && f === this.maxFloor ? ' · platform — board trains with E' : '';
+            G.ui?.banner?.(`🛗 Floor ${f}/${this.maxFloor}${top}`, `elevator${plat || (this.maxFloor ? ' · 0–9 jump · F next' : '')}`);
+            G.audio?.sfx?.(f > from ? 'open' : 'close');
+        }
     },
 
-    /** Ride elevator to a floor (same as setFloor; named for clarity / tests). */
-    rideElevator(n) { this.setFloor(n); },
+
+    /* ── the working lift car ────────────────────────────────────────────────
+       A real chamber behind the wall plane with two sliding leaves. Built as
+       live meshes (the shell is merged and immutable) and rebuilt on every
+       floor change, restoring whatever door state the ride is currently in
+       rather than snapping open. */
+    _buildCar(th, accent) {
+        this._carParts = null;
+        if (this.maxFloor <= 0) return;
+
+        const grp = new THREE.Group();
+        const mk = (w, h, d, x, y, z, hex, glow) => {
+            const m = new THREE.Mesh(
+                new THREE.BoxGeometry(w, h, d),
+                glow ? new THREE.MeshBasicMaterial({ color: hex })
+                     : new THREE.MeshStandardMaterial({ color: hex, roughness: 0.42, metalness: 0.45 })
+            );
+            m.position.set(x, y, z);
+            grp.add(m);
+            return m;
+        };
+
+        // shaft-side shell: back, sides, floor, ceiling
+        mk(10, CAR_H, CAR_HALF * 2 + 20, CAR_BACK, CAR_H / 2, CAR_LZ, 0x2b3038);
+        mk(CAR_DEPTH, CAR_H, 10, CAR_CX, CAR_H / 2, CAR_LZ - CAR_HALF - 5, 0x353b45);
+        mk(CAR_DEPTH, CAR_H, 10, CAR_CX, CAR_H / 2, CAR_LZ + CAR_HALF + 5, 0x353b45);
+        mk(CAR_DEPTH, 3, CAR_HALF * 2, CAR_CX, 1.5, CAR_LZ, 0x1d2128);
+        mk(CAR_DEPTH, 4, CAR_HALF * 2, CAR_CX, CAR_H, CAR_LZ, 0x22262d);
+        // ceiling panel — the only light source inside a shut car
+        mk(CAR_DEPTH - 24, 2, CAR_HALF, CAR_CX, CAR_H - 3, CAR_LZ, 0xfff4d6, true);
+        // rear mirror + handrails: both land at ~1.1 m and are strong scale cues
+        mk(2, 30, CAR_HALF * 1.5, CAR_BACK + 6, 40, CAR_LZ, 0x7f8b9c);
+        mk(CAR_DEPTH - 20, 3, 3, CAR_CX, 33, CAR_LZ - CAR_HALF - 1, 0x9ca3af);
+        mk(CAR_DEPTH - 20, 3, 3, CAR_CX, 33, CAR_LZ + CAR_HALF + 1, 0x9ca3af);
+
+        /* Floor indicator above the DOORS, which is where you actually look
+           while riding — on the back wall it sat behind the rider's head. */
+        const ind = mk(3, 9, 40, LIFT_WX - 4, CAR_H - 11, CAR_LZ, accent.getHex(), true);
+        mk(5, 15, 50, LIFT_WX - 2, CAR_H - 11, CAR_LZ, 0x11151b);   // bezel behind it
+
+        /* Two leaves that part in z. Brushed steel, not the pale blue-grey the
+           first pass used — at interior light levels that rendered as a flat
+           slab almost exactly the colour of the sky background, so the shut
+           doors read as a hole rather than as doors. Each leaf gets an inset
+           panel and the pair gets a dark centre seam, which is what makes the
+           parting read at all. */
+        const leafW = CAR_HALF + 2;
+        const leaf = (sign) => {
+            const g = new THREE.Group();
+            const face = new THREE.Mesh(
+                new THREE.BoxGeometry(6, CAR_H - 6, leafW),
+                new THREE.MeshStandardMaterial({ color: 0x5b6472, roughness: 0.34, metalness: 0.72 })
+            );
+            g.add(face);
+            const inset = new THREE.Mesh(
+                new THREE.BoxGeometry(1.5, CAR_H - 26, leafW - 10),
+                new THREE.MeshStandardMaterial({ color: 0x6f7a8a, roughness: 0.28, metalness: 0.8 })
+            );
+            inset.position.set(3.4, 0, 0);
+            g.add(inset);
+            // seam edge: a dark lip on the closing face
+            const lip = new THREE.Mesh(
+                new THREE.BoxGeometry(6.4, CAR_H - 6, 2),
+                new THREE.MeshStandardMaterial({ color: 0x14181e, roughness: 0.6, metalness: 0.3 })
+            );
+            lip.position.set(0, 0, sign * (leafW / 2 - 1));
+            g.add(lip);
+            g.position.set(LIFT_WX, (CAR_H - 6) / 2, 0);
+            grp.add(g);
+            return g;
+        };
+        const left = leaf(1);
+        const right = leaf(-1);
+
+        this.group.add(grp);
+        this._carParts = { grp, left, right, ind, leafW, accent: accent.getHex() };
+        this._applyDoors(this._lift.doors);
+    },
+
+    /** Slide the leaves. 1 = retracted into the jambs, 0 = shut. */
+    _applyDoors(open) {
+        this._lift.doors = open;
+        const c = this._carParts;
+        if (!c) return;
+        const slide = c.leafW * open;
+        c.left.position.z = CAR_LZ - c.leafW / 2 - slide;
+        c.right.position.z = CAR_LZ + c.leafW / 2 + slide;
+        c.left.position.x = LIFT_WX;
+        c.right.position.x = LIFT_WX;
+        // the mouth is only solid while the doors are actually shut
+        this._sealCar(open < 0.06);
+    },
+
+    /** Add/remove the invisible barrier across the car mouth. */
+    _sealCar(on) {
+        if (!Array.isArray(G.colliders)) return;
+        const i = G.colliders.findIndex(c => c.id === 'liftDoor');
+        if (on && i < 0) {
+            G.colliders.push({
+                id: 'liftDoor',
+                x0: S(LIFT_WX - 6), x1: S(LIFT_WX + 6),
+                z0: S(CAR_LZ - CAR_HALF), z1: S(CAR_LZ + CAR_HALF)
+            });
+        } else if (!on && i >= 0) {
+            G.colliders.splice(i, 1);
+        }
+    },
+
+    /** Where the rider stands inside the car, in WORLD units. */
+    carSpot() { return { x: S(CAR_CX), z: S(CAR_LZ) }; },
+
+    /** Standing inside the car. The lift-bank zone is centred out in the lobby
+     *  and does NOT cover the car interior, so without this you could never
+     *  press a button from where the lift just delivered you. */
+    inCar() {
+        if (!this.building || this.maxFloor <= 0) return false;
+        const p = G.camera.position;
+        const spot = this.carSpot();
+        return Math.hypot(p.x - spot.x, p.z - spot.z) < S(CAR_DEPTH * 0.75);
+    },
+
+    /* Ride to a floor. Unlike the old setFloor this is a journey: the doors
+       shut, the car moves with you inside it, and it opens somewhere else. */
+    rideElevator(n) {
+        if (!this.building || this.maxFloor <= 0) return;
+        if (this._lift.phase !== 'idle') return;          // already travelling
+        const to = Math.max(0, Math.min(this.maxFloor, n | 0));
+        if (to === this.floor) {
+            G.ui?.addToast?.('Already on floor ' + to, 'info');
+            return;
+        }
+        if (!this.atLift() && !this.inCar()) {
+            G.ui?.addToast?.('Walk to the lift bank to ride', 'info');
+            return;
+        }
+        const spot = this.carSpot();
+        G.player.teleport(spot.x, spot.z, Math.PI / 2);   // step in, face the doors
+        G.player.enabled = false;
+        this._lift.from = this.floor;
+        this._lift.to = to;
+        this._lift.dur = Math.max(RIDE_MIN,
+            Math.min(RIDE_MAX, Math.abs(to - this.floor) * RIDE_PER_FLOOR));
+        this._lift.t = 0;
+        this._lift._shown = null;
+        this._lift.phase = 'closing';
+        G.audio?.sfx?.('close');
+    },
+
+    update(dt) {
+        if (!this.building) return;
+        const L = this._lift;
+        if (L.phase === 'idle') return;
+        L.t += dt;
+
+        if (L.phase === 'closing') {
+            this._applyDoors(Math.max(0, 1 - L.t / DOOR_SECS));
+            if (L.t >= DOOR_SECS) { L.phase = 'moving'; L.t = 0; }
+        } else if (L.phase === 'moving') {
+            const k = Math.min(1, L.t / L.dur);
+            /* Hold the rider in the car and give it the float of a real cab: a
+               lurch as it takes up, a settle as it arrives, faint sway between.
+               The travel itself is sold by the indicator ticking past floors —
+               a sealed box has no parallax to move against. */
+            const spot = this.carSpot();
+            const dir = L.to > L.from ? 1 : -1;
+            const lurch = Math.sin(Math.min(1, L.t / 0.45) * Math.PI) * 0.9 * -dir;
+            const settle = k > 0.85
+                ? Math.sin((k - 0.85) / 0.15 * Math.PI) * 0.6 * dir : 0;
+            G.camera.position.set(
+                spot.x + Math.sin(L.t * 7.3) * 0.12,
+                // player.eyeY is already absolute (G.floorY + EYE_H) — adding
+                // FLOOR_Y again put the camera 4000 units under the world.
+                (G.player.eyeY ?? (FLOOR_Y + EYE_H)) + lurch + settle,
+                spot.z + Math.cos(L.t * 5.9) * 0.1
+            );
+            const at = Math.round(L.from + (L.to - L.from) * k);
+            if (at !== L._shown) {
+                L._shown = at;
+                if (this._carParts) {
+                    this._carParts.ind.material.color.setHex(
+                        at === L.to ? 0x4ade80 : this._carParts.accent);
+                }
+                G.ui?.banner?.('🛗 ' + at, L.from + ' → ' + L.to);
+            }
+            if (k >= 1) {
+                this._setFloor(L.to);      // rebuild the destination around the shut car
+                L.phase = 'opening';
+                L.t = 0;
+                G.audio?.sfx?.('open');
+            }
+        } else if (L.phase === 'opening') {
+            this._applyDoors(Math.min(1, L.t / DOOR_SECS));
+            if (L.t >= DOOR_SECS) {
+                L.phase = 'idle';
+                L.t = 0;
+                G.player.enabled = true;
+                const top = this.floor === this.maxFloor ? ' · TOP' : '';
+                const home = this.floor === 0
+                    ? ' · the street door is on this floor'
+                    : ' · ride down to floor 0 to leave';
+                G.ui?.banner?.('🛗 ' + (this._floorLabel || 'Floor ' + this.floor) + top,
+                    'floor ' + this.floor + '/' + this.maxFloor + home);
+            }
+        }
+    },
+
+    /** Lift zone `i` in WORLD units. Interior geometry is authored in local
+     *  units and scaled by ROOM_SCALE, so anything outside this module that
+     *  needs to stand at a lift must go through here rather than reading
+     *  `_liftZones` raw. */
+    liftZoneWorld(i = 0) {
+        const z = this._liftZones?.[i];
+        if (!z) return null;
+        return { x: S(z.x), z: S(z.z), r: S(z.r) };
+    },
 
     atLift() {
         if (!this.building || !this._liftZones?.length) return false;
         const p = G.camera.position;
-        return this._liftZones.some(z => Math.hypot(p.x - z.x, p.z - z.z) < z.r);
+        return this._liftZones.some(z => Math.hypot(p.x - S(z.x), p.z - S(z.z)) < S(z.r));
     },
 
     /** The interactive prop the player is standing at, if any. Exposed so a
@@ -1082,8 +1369,8 @@ export const Interior = {
         const p = G.camera.position;
         let best = null, bestD = Infinity;
         for (const h of this._hotspots) {
-            const d = Math.hypot(p.x - h.x, p.z - h.z);
-            if (d < h.r && d < bestD) { best = h; bestD = d; }
+            const d = Math.hypot(p.x - S(h.x), p.z - S(h.z));
+            if (d < S(h.r) && d < bestD) { best = h; bestD = d; }
         }
         return best;
     },
@@ -1127,19 +1414,28 @@ export const Interior = {
         this._savedPos = G.camera.position.clone();
         this._savedYaw = G.player.yaw;
         G.colliders = (this._colliders || []).map(c => ({
-            x0: c.x0, x1: c.x1, z0: c.z0, z1: c.z1
+            x0: S(c.x0), x1: S(c.x1), z0: S(c.z0), z1: S(c.z1)
         }));
         G.floorY = FLOOR_Y;
         G.inside = b;
-        G.player.teleport(0, ROOM_D / 2 - 70, 0);
+        G.player.teleport(0, S(ROOM_D / 2 - 70), 0);
         const multi = this.maxFloor > 0 ? ` · ELEVATOR: F / E at lift / 0–${this.maxFloor}` : '';
         G.ui?.banner?.(`${b.emoji || '🏢'} ${b.name}`, 'press E at the door to leave' + multi);
         G.audio?.sfx?.('open');
         G.progress?.unlock?.('went_inside');
     },
 
-    exit() {
+    exit(force = false) {
         if (!this.building) return;
+        /* You cannot step off the 7th floor into the street. Riding back down
+           is the whole reason the lift exists — without this the floors are
+           just a skin on one room. Teardown paths (metro boarding, tests) pass
+           force, because they are not the player walking out of a door. */
+        if (!force && this.floor !== 0) {
+            G.ui?.addToast?.('🛗 Take the lift down to the lobby to leave', 'info');
+            return;
+        }
+        if (this._lift.phase !== 'idle') return;   // mid-ride: doors are shut
         this.group.visible = false;
         if (this._fillLight) this._fillLight.visible = false;
         if (this._rimLight) this._rimLight.visible = false;
@@ -1151,6 +1447,9 @@ export const Interior = {
         this.building = null;
         this.floor = 0;
         this.maxFloor = 0;
+        this._lift = { phase: 'idle', t: 0, doors: 1, from: 0, to: 0, dur: 0 };
+        this._carParts = null;
+        G.player.enabled = true;
         if (this._savedPos) {
             G.player.teleport(this._savedPos.x, this._savedPos.z, this._savedYaw);
         }
@@ -1161,7 +1460,7 @@ export const Interior = {
     atExit() {
         if (!this.building) return false;
         const p = G.camera.position;
-        return Math.abs(p.x) < DOOR_W / 2 + 30 && Math.abs(p.z - (ROOM_D / 2 - 30)) < 55;
+        return Math.abs(p.x) < S(DOOR_W / 2 + 30) && Math.abs(p.z - S(ROOM_D / 2 - 30)) < S(55);
     },
 
     snapshot() {

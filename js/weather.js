@@ -611,9 +611,12 @@ export const Weather = {
            reading as a blackout — the rooms are lit almost entirely by ambient
            and hemi, with no key light to survive the curve. */
         if (G.inside) {
-            if (W.hemi) W.hemi.intensity = 2.0;
-            if (W.ambient) W.ambient.intensity = 1.35;
-            if (W.sun) W.sun.intensity = 0.55;
+            /* Trimmed from 2.0/1.35: those were set when interiors were 3x
+               scale and mostly dark surfaces. At human scale the pale office
+               palette bounces far more light and the rooms blew out white. */
+            if (W.hemi) W.hemi.intensity = 1.35;
+            if (W.ambient) W.ambient.intensity = 0.85;
+            if (W.sun) W.sun.intensity = 0.45;
             if (W.ambient) W.ambient.color.setHex(0x9aa6bc);
         } else if (G.ridingMetro) {
             if (W.hemi) W.hemi.intensity = 0.45;

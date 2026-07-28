@@ -12,7 +12,7 @@ import { makePaperJob, stepPaper, PAPER_LABS, PAPER_SOURCES } from '../js/resear
 import { STAGE_CODE } from '../js/citizens.js';
 import { buildMetroRoutes, stepTrain } from '../js/metro.js';
 import { createJailState, tryArrest, stepJail, JAIL_BID } from '../js/jail.js';
-import { BLDS } from '../js/data.js';
+import { BLDS, SEED as SEED_MODELS } from '../js/data.js';
 import { createCourtState, enqueueCase, stepCourt } from '../js/court.js';
 import { createOrbitState, enterOrbit, exitOrbit, updateOrbitCamera } from '../js/orbit_mode.js';
 import { applyXray } from '../js/xray_mode.js';
@@ -20,6 +20,7 @@ import { buildHolomapGeometry } from '../js/holomap.js';
 import { conferenceStatus } from '../js/conference.js';
 import { seasonForDate, SEASONS, easterFor, resolveFestivals, activeFestivals, FESTIVALS, REGIONAL } from '../js/seasonal.js';
 import { classifyHeadline } from '../js/news_reactivity.js';
+import { deriveTraits, dominantTrait, speedMod, venueBias, traitChat } from '../js/personality.js';
 import { kardashevScale } from '../js/kardashev.js';
 import { isWetWeather, puddleLayout } from '../js/wetness.js';
 import { createGhosts, Multiplayer } from '../js/multiplayer.js';
@@ -190,6 +191,40 @@ assert(FESTIVALS.length + REGIONAL.length === 19, '19 festivals defined');
     const diwaliDay = new Date(2026, 10, 9);
     assert(activeFestivals(diwaliDay, ['south_asia']).some(f => f.id === 'diwali'), 'Diwali shows in South Asia');
     assert(!activeFestivals(diwaliDay, []).some(f => f.id === 'diwali'), 'Diwali hidden outside its regions');
+}
+
+// 10bb. Personality traits actually derived from model data
+{
+    const seeded = SEED_MODELS.find(m => m.id === 'claude-3-5-sonnet');
+    const gemini = SEED_MODELS.find(m => m.id === 'gemini-1-5-pro');
+    const grok = SEED_MODELS.find(m => m.id === 'grok-1-5');
+    assert(dominantTrait(seeded) === 'coding', 'Claude 3.5 Sonnet reads as coding (HumanEval 92 + SWE talent)');
+    assert(dominantTrait(gemini) === 'analytical', 'Gemini 1.5 Pro reads as analytical (long-context recall)');
+    // snark is a social signal — its maths scores should not outvote its character
+    assert(dominantTrait(grok) === 'social', 'Grok-1.5 reads as social, not analytical');
+    // traits are cached on the model, and every one is in range
+    for (const m of SEED_MODELS) {
+        const t = deriveTraits(m);
+        for (const k of ['coding', 'social', 'creative', 'analytical']) {
+            assert(t[k] >= 0 && t[k] <= 1, `${m.name} ${k} trait in 0..1`);
+        }
+    }
+    // speed stays a nudge, never a sprint
+    const speeds = SEED_MODELS.map(speedMod);
+    assert(Math.min(...speeds) > 0.9 && Math.max(...speeds) < 1.12, 'personality speed stays within +/-12%');
+    // venueBias is gated: it must decline most of the time, and only ever
+    // return a building the world actually has
+    const exists = (bid) => ['gym', 'cafe', 'uni_library', 'arena', 'neon_bar', 'central_park'].includes(bid);
+    let fired = 0;
+    for (let i = 0; i < 400; i++) if (venueBias(seeded, 'lunch', exists)) fired++;
+    assert(fired > 0 && fired < 160, `venueBias fires sometimes, not always (${fired}/400)`);
+    assert(venueBias(seeded, 'work', exists, () => 0) === null, 'venueBias never overrides work');
+    assert(venueBias(seeded, 'lunch', () => false, () => 0) === null, 'venueBias skips buildings the world lacks');
+    // with rand pinned to 0 the gate always opens, so the choice is the trait's
+    assert(venueBias(seeded, 'lunch', exists, () => 0) === 'gym', 'a coding model lunches at the gym');
+    assert(venueBias(gemini, 'lunch', exists, () => 0) === 'uni_library', 'an analytical model lunches at the library');
+    assert(traitChat(seeded, () => 0) !== null, 'trait chat returns a line when the gate opens');
+    assert(traitChat(seeded, () => 0.9) === null, 'trait chat mostly declines so routine chatter dominates');
 }
 
 // 10c. News reactivity classifier

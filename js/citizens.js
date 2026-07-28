@@ -8,6 +8,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { G, EYE_H } from './state.js';
 import { LABS, SEED, ROSTER, FOUNDERS, WORKERS, STAGES, ACTS, getStage, getAct, getFounderAct, LAB_HQ } from './data.js';
 import { City, KERB_H } from './city.js';
+import { speedMod, venueBias, traitLabel } from './personality.js';
 
 /* Goal-driven archetypes (ported from the 2D app): ~20% of citizens have a
    lifestyle that pulls them to a favourite venue during their free time — a
@@ -354,10 +355,13 @@ export const Citizens = {
 
     _paceFor(c, act) {
         const mult = STAGES[c.stage]?.speed || 1;
-        if (c.model.founder) return (95 + Math.random() * 35) * mult;
-        if (act === 'commute') return (100 + Math.random() * 45) * mult;
-        if (INDOOR_ACTS.has(act)) return (72 + Math.random() * 30) * mult;
-        return (85 + Math.random() * 40) * mult;
+        // Personality nudges pace: social models bustle, analytical ones amble.
+        // Narrow by design (~0.94-1.08) — texture in a crowd, not sprinters.
+        const per = c.model.worker ? 1 : speedMod(c.model);
+        if (c.model.founder) return (95 + Math.random() * 35) * mult * per;
+        if (act === 'commute') return (100 + Math.random() * 45) * mult * per;
+        if (INDOOR_ACTS.has(act)) return (72 + Math.random() * 30) * mult * per;
+        return (85 + Math.random() * 40) * mult * per;
     },
 
     /* Where a worker NPC's `workplace` key actually stands in the world.
@@ -425,6 +429,14 @@ export const Citizens = {
         // archetype pull: free-time haunts (founders keep their CEO schedule)
         if (!c.model.founder && c.arche && c.arche.acts.includes(act) && G.bldById[c.arche.venue]) {
             targetBid = c.arche.venue;
+        }
+        /* Personality pull, for the ~80% with no lifestyle archetype: a coding
+           model heads for the gym at lunch, an analyst for the library. Applied
+           after the archetype so an explicit lifestyle still wins, and only for
+           models — workers are on shift and founders keep the CEO schedule. */
+        else if (!c.model.founder && !c.model.worker) {
+            const bias = venueBias(c.model, act, (bid) => !!G.bldById[bid]);
+            if (bias) targetBid = bias;
         }
 
         const prevAct = c._lastAct;

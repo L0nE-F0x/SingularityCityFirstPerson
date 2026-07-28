@@ -12,6 +12,8 @@ import {
     ACTS, STAGES, DC_FACILITIES, SPACE_ORGS, LONGEVITY_COMPANIES, ROBOTICS_COMPANIES, DISTRICTS
 } from './data.js';
 import { City } from './city.js';
+import { Tutorial } from './tutorial.js';
+import { DailyBriefing } from './daily_briefing.js';
 
 const $ = id => document.getElementById(id);
 
@@ -43,6 +45,7 @@ export const UI = {
         this.els.panelOverlay.addEventListener('mousedown', e => {
             if (e.target === this.els.panelOverlay) this.closePanel();
         });
+        this._injectPauseExtras();
         document.querySelectorAll('#pauseMenu [data-panel]').forEach(btn => {
             btn.onclick = () => { this.hidePause(); this.showPanel(btn.dataset.panel); };
         });
@@ -89,6 +92,34 @@ export const UI = {
 
         this._recalcIndex();
         setInterval(() => this._recalcIndex(), 30000);
+    },
+
+    /* Pause-menu entries for the two features that are not data panels. They
+       are injected rather than written into index.html so the markup stays a
+       single list of `data-panel` buttons.
+
+       Neither uses hidePause(): that re-requests pointer lock, and both
+       features release it a moment later — the async lock would land after the
+       release and trap the cursor behind their overlay. */
+    _injectPauseExtras() {
+        const grid = document.querySelector('#pauseMenu .pause-grid');
+        if (!grid || $('pauseTutorial')) return;
+        const before = $('pauseGoPixi') || null;
+        const leave = () => {
+            G.paused = false;
+            this.els.pauseMenu?.classList.add('hidden');
+        };
+        const add = (id, label, title, run) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.id = id;
+            b.textContent = label;
+            b.title = title;
+            b.onclick = () => { leave(); run(); };
+            grid.insertBefore(b, before);
+        };
+        add('pauseTutorial', '🎓 Tutorial', 'Replay the guided walkthrough', () => Tutorial.start());
+        add('pauseBriefing', '📽 Daily Briefing', "Record a video reel of today's news", () => DailyBriefing.start());
     },
 
     // ── HUD ─────────────────────────────────────────────────────────

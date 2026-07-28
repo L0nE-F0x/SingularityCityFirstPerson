@@ -40,6 +40,8 @@ import { Kardashev } from './kardashev.js';
 import { Wetness } from './wetness.js';
 import { Ambience } from './ambience.js';
 import { NewsReactivity } from './news_reactivity.js';
+import { Tutorial } from './tutorial.js';
+import { DailyBriefing } from './daily_briefing.js';
 import { Terminal } from './terminal.js';
 import { CityStore } from './store/city_store.js';
 import { Live } from './store/live.js';
@@ -174,6 +176,13 @@ async function boot() {
     // receives, instead of each module having to remember.
     World.finalizeShadows(G.scene);
 
+    // After UI + Player: the tutorial spotlights HUD nodes and both of these
+    // take over the camera, so they need those to already exist.
+    Tutorial.init();
+    DailyBriefing.init();
+    G.tutorial = Tutorial;
+    G.dailyBriefing = DailyBriefing;
+
     // Integration: live data + view shell (CityStore already init via Progress)
     G.store = CityStore;
     G.live = Live;
@@ -291,6 +300,7 @@ async function boot() {
             if (!G.orbitMode && !G.terminalOpen) Player.update(dt);
             Tour.update(dt);
             Interact.update(dt);
+            Interior.update(dt);   // lift doors + the ride between floors
             Citizens.update(dt);
             ChatBubbles.update(dt);
             Birds.update(dt, G.time);
@@ -315,6 +325,9 @@ async function boot() {
             Ambience.update(dt, G.time);
             // after Weather: the crisis flicker overrides the window emissive ramp
             NewsReactivity.update(dt);
+            // last: both take the camera, so they must run after Player/Tour
+            Tutorial.update(dt);
+            DailyBriefing.update(dt);
             Terminal.update(dt);
             UI.update(dt);
             {

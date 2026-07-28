@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { G } from './state.js';
 import { CHAT_MSGS } from './data.js';
+import { traitChat } from './personality.js';
 import { CitizenOfDay } from './citizen_of_day.js';
 import { City, KERB_H } from './city.js';
 
@@ -81,6 +82,9 @@ export const ChatBubbles = {
         // what makes Diwali or Obon feel like the city noticed, not just decor.
         let text = null;
         if (Math.random() < 0.3) text = G.seasonal?.chatLine?.() ?? null;
+        // …and personality occasionally displaces it too, so a coder sounds
+        // like a coder rather than like whatever it happens to be doing.
+        if (!text && c.model && !c.model.worker) text = traitChat(c.model);
         if (!text) text = pool[(Math.random() * pool.length) | 0];
         this._draw(b, text);
         b.cz = c;

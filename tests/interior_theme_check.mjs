@@ -90,17 +90,20 @@ for (const b of buildings) {
         const lifts = Interior._liftZones.length;
         const mf = Interior.maxFloor;
         for (let f = 0; f <= mf; f++) {
-            Interior.setFloor(f);
+            Interior.setFloorInstant ? Interior.setFloorInstant(f) : Interior._setFloor(f);
             if (Interior.floor !== f) throw new Error(`setFloor ${f} failed, got ${Interior.floor}`);
             if (Interior.group.children.length < 2) throw new Error(`empty room floor ${f}`);
         }
         if (mf > 0) {
             if (Interior._liftZones.length < 1) throw new Error('multi-floor but no lift zones');
-            const z = Interior._liftZones[0];
-            G.camera.position.set(z.x + 10, 17, z.z);
+            // Interior geometry is authored in local units and scaled by
+            // ROOM_SCALE; stand at the lift in WORLD units, as the player does.
+            const z = Interior.liftZoneWorld(0);
+            if (!z) throw new Error('no world lift zone');
+            G.camera.position.set(z.x + z.r * 0.3, 17, z.z);
             if (!Interior.atLift()) throw new Error('atLift false at zone');
         }
-        Interior.exit();
+        Interior.exit(true);   // harness teardown; the player must ride down
         if (Interior.building) throw new Error('exit left building set');
         log(`OK  ${b.id.padEnd(22)} cat=${th.padEnd(12)} floors=0..${mf} meshes=${kids} lifts=${lifts}`);
     } catch (e) {
