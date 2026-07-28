@@ -1,8 +1,8 @@
 # Resume here — Singularity City: First Person
 
-**Updated:** 2026-07-28 (rendering overhaul, content parity, elevator + scale, supply chain).
-**Deployed:** yes — `main` @ `541aa25` is live via Netlify auto-deploy from a push to `main`.
-**Owner status:** playtesting the live build; happy with frame rate and exposure.
+**Updated:** 2026-07-28 evening (2D-first product flow + Netlify stability).
+**Deployed:** yes — `main` @ `3aeadb5` on Netlify (`singularitycityfirstperson.netlify.app`).
+**Owner status:** playtesting overnight; will report back with findings.
 
 ```
 python serve.py 8931
@@ -141,7 +141,20 @@ draw calls** (44 meshes per car). Keep new vehicles going through it.
 
 ---
 
-## 5. Open / deferred — pick up here
+## 5. Product flow (decided 2026-07-28)
+
+Public entry is **2D**, matching production singularitycity.net:
+
+1. Site root / `/pixi/` → landing (Enter Singularity City).
+2. FP is **only** from the in-city toolbar **`🚶 FP`** (compact so ⚙️🔊🎵 fit).
+3. No landing “Walk First Person” / “Open First Person” chip.
+4. Netlify: `/` → `/pixi/` (302); FP stays at `/index.html`.
+
+Bridge: `pixi/js/sc_integrated_bridge.js` (toolbar only). Do not re-add landing CTAs.
+
+## 6. Open / deferred — pick up here
+
+**Owner is playtesting — wait for their report before large new work.**
 
 **Deferred by the owner — do NOT "fix" without asking:**
 
@@ -153,10 +166,25 @@ draw calls** (44 meshes per car). Keep new vehicles going through it.
   leave it for now. This is the highest-value remaining visual work, but ask
   first.
 
-**Known cosmetic, not chased:**
+**Known cosmetic / ops (not blocking playtest):**
 
 - Daytime fireworks from a news celebration look slightly odd. Brief and rare.
 - Parapet caps stay lit under the datacentre brownout on *non*-consumer
   buildings — correct, but worth knowing if you extend the effect.
+- Console **noise** (not failures): `[v351] Redirected … from arena`, hallucinated
+  model filter, PWA `beforeinstallprompt` banner, bridge ready log.
+- Netlify functions need site env **`SUPABASE_URL`** + **`SUPABASE_SERVICE_KEY`**
+  for `submit-data` writes; missing env → 404/500 on those POSTs only.
+- `netlify.toml` must stay **UTF-8 without BOM** (PowerShell `Set-Content -Encoding UTF8` adds a BOM and can break Initializing).
 
 **Nothing from the original 2D→FP parity audit remains outstanding.**
+
+## 7. This session (2026-07-28 evening) — done
+
+| Commit | What |
+|--------|------|
+| `22ffad5` | 2D-first entry; compact toolbar FP; landing CTAs removed |
+| `64ea79c` | Netlify deploy fix (BOM stripped; temporary no-functions) |
+| `3aeadb5` | Daily briefing crash (`ts` localeCompare); functions + favicons restored |
+
+**Safest next action:** apply owner playtest notes. Do not invent new features until they report.
