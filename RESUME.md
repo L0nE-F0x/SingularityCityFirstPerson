@@ -1,13 +1,14 @@
 # Resume here — Singularity City: First Person
 
-**Updated:** 2026-07-28 evening (2D-first product flow + Netlify stability).
-**Deployed:** yes — `main` @ `3aeadb5` on Netlify (`singularitycityfirstperson.netlify.app`).
-**Owner status:** playtesting overnight; will report back with findings.
+**Updated:** 2026-07-29 (free-fly, landscape polish, idle auto-tour screensaver).  
+**Deployed:** yes — `main` @ `5cc6ee7` on Netlify (`singularitycityfirstperson.netlify.app`).  
+**Owner status:** wrapping for the night; will playtest live and report back tomorrow.
 
 ```
 python serve.py 8931
 http://127.0.0.1:8931/?autostart=1          # skip the start screen
 http://127.0.0.1:8931/home.html             # landing page
+http://127.0.0.1:8931/pixi/                 # 2D city (public entry)
 ```
 
 Hard-refresh after code changes: **Ctrl+Shift+R**.
@@ -19,7 +20,7 @@ Hard-refresh after code changes: **Ctrl+Shift+R**.
 ### Tests — all five must stay green
 
 ```
-node tests/run_node_check.mjs        # import-checks all 64 modules
+node tests/run_node_check.mjs        # import-checks all modules
 node tests/parity_exercise.mjs       # drives real sim entry points
 node tests/interior_theme_check.mjs  # every interior builds on every floor
 node tests/street_check.mjs          # kerbs never cross a carriageway
@@ -40,13 +41,6 @@ await fetch('/__shot?name=foo', { method: 'POST', body: url });
 **Read/serialise the canvas before any `await`**, or you capture a cleared
 buffer. A blank or all-black frame is almost always this, not a render bug.
 
-If the browser pane will not composite, you can still drive everything
-headlessly: set `G.renderer.setSize(1280, 720, false)` and step the systems
-manually (`G.weatherSys.update(1/30, t)`, `G.world.update(...)`, etc).
-Move the camera BEFORE running the systems — the sky dome, stars and shadow
-frustum are parked on the camera each frame, so updating first and moving after
-leaves a hole in the sky.
-
 ### Useful boot params
 
 `?autostart=1` · `?sim=<sec>` fast-forward · `?dp=<0..1>` freeze time of day ·
@@ -63,81 +57,55 @@ Read these before touching the relevant file — each cost real debugging.
 **`js/world.js` — `facadeTint` clamps in sRGB, deliberately.**
 `Color.getHSL`/`setHSL` default to the *linear* working colour space. Clamping
 L to `[0.46, 0.74]` there is really sRGB `[0.71, 0.88]`, which forced every
-façade into a near-white band: district grey `#5a6b80` came out `#94aecf` and
-DeepSeek `#0ea5e9` came out `#8db2d3` — two unrelated colours landing on the
-same pale blue. This was the single biggest cause of the original "washed out,
-everything looks the same" complaint. Do not drop the `THREE.SRGBColorSpace`
-arguments.
+façade into a near-white band. Do not drop the `THREE.SRGBColorSpace` arguments.
 
 **`js/interior.js` — `ROOM_SCALE = 1/3`.**
-Interiors are authored at ~3x human scale (ceiling 96 = 9.6 m). The whole
-interior group is scaled by `ROOM_SCALE`, and the few places where
-interior-local units meet WORLD units convert through `S()`: colliders,
-teleports, and the lift/hotspot/exit proximity checks. Any new consumer of
-`_liftZones` / `_hotspots` / `_colliders` must convert too. Prefer
-`Interior.liftZoneWorld(i)` over reading `_liftZones` raw.
+Interiors are authored at ~3x human scale. Interior-local units meet WORLD units
+via `S()` / `Interior.liftZoneWorld(i)`. Prefer helpers over raw `_liftZones`.
 
 **`js/world.js` — per-building instance handles.**
-Buildings share three instanced meshes. `b._inst` and `b._capInst` record
-`{ mesh, i, base }` so a system can recolour ONE building; changing a material
-would recolour the whole city. This is how the datacentre brownout works, and
-why the parapet cap is tracked separately — dimming only the walls left every
-roof vividly lit and the effect did not read from above.
-
-**`js/supply_chain.js` — shortage tracks the scarcest CRITICAL input.**
-Averaging every stock let a full grid and plenty of helium mask an empty GPU
-stockpile; a real run reported "NOMINAL" with accelerators at 17%.
-
-**`js/interior.js` — the lift is a state machine, not a teleport.**
-`setFloor()` rides (closing → moving → opening). `setFloorInstant()` jumps with
-no ride — use it in tests and boot params. `exit()` refuses above floor 0
-unless you pass `exit(true)`; teardown paths (metro boarding, test harness)
-pass force. `Interior.inCar()` exists because the lift-bank zone sits out in
-the lobby and does not cover the car interior.
+`b._inst` / `b._capInst` recolour ONE building; changing a shared material
+recolours the whole city.
 
 **`js/textures.js` — `signAtlas()` is the live path.**
-One atlas + merged quads = 3 draw calls. The old per-building `makeSignPlate`
-path was ~390 draw calls and 130 textures.
+One atlas + merged quads. Do not revive per-building `makeSignPlate` for street signs.
 
 **`js/traffic.js` — `mergeByMaterial()` on every vehicle builder.**
-Vehicles are authored as dozens of little boxes; `ambientCars` alone was **614
-draw calls** (44 meshes per car). Keep new vehicles going through it.
+Keep new vehicles going through it.
+
+**`js/fly_mode.js` — free-fly (C key).**
+Mutually exclusive with orbit / tour / interiors / metro. Player still owns
+mouse look while `G.flyMode`; position is owned by `FlyMode.update`. Landing
+clamps XZ to the walkable city pad and restores eye height.
+
+**`js/tour.js` — idle screensaver.**
+`G.settings.autoTour` (default true) + `G.settings.idleTourMin` (default 5).
+Idle loop restarts forever; manual `T` tour ends after one circuit + achievement.
+KeyT is owned by UI.toggle — tour input listener must not also treat T as “stop”.
 
 ---
 
 ## 3. Traps that have already caught someone
 
-- **`G.player.eyeY` is ABSOLUTE** (`G.floorY + EYE_H`), not an offset. Adding
-  `FLOOR_Y` again puts the camera 4000 units under the world.
-- **`THREE.Raycaster` ignores `object.visible`.** Filter up the parent chain or
-  you will "find" hidden geometry and chase a ghost.
-- **`PointsMaterial.size` is WORLD-space** and is *not* affected by an ancestor
-  group's scale. Sizes authored in a scaled space render enormous — this made
-  the holomap a white blob.
-- **Merged-shell meshes report `material.color` as `#ffffff`** because they use
-  `vertexColors`. Colour alone will not identify them in a raycast.
-- Opening a hole in a wall means opening it in **both** the collider and the
-  geometry. Doing only the collider put the player inside the lift car facing
-  the back of a solid wall.
-- `pixi/` is a **read-only vendored copy** of the production 2D app. Never edit
-  anything under it.
+- **`G.player.eyeY` is ABSOLUTE** (`G.floorY + EYE_H`), not an offset.
+- **`THREE.Raycaster` ignores `object.visible`.** Filter up the parent chain.
+- **`PointsMaterial.size` is WORLD-space** and ignores ancestor scale.
+- **Merged-shell meshes report `material.color` as `#ffffff`** (vertexColors).
+- Opening a hole in a wall = collider **and** geometry.
+- `pixi/` is a **read-only vendored copy** of the production 2D app. Never edit it.
+- `netlify.toml` must stay **UTF-8 without BOM**.
 
 ---
 
 ## 4. Current state
 
 - **25 districts**, 148 named buildings + ~200 infill ≈ **350 blocks**
-- Tallest: Google DeepMind **77 m / 32 floors**
-- **~570 draw calls** at street level (was ~1400 before the vehicle merge)
-- Citizens: 700 (medium preset) + 45 shift-working worker NPCs
-- Sun shadows on medium/high; sky-derived PMREM environment; ACES at exposure 1.35
-- Interiors **bespoke** for: bar, underground, metro, embassy, villa, alignment,
-  press, legacy museum, backbone, agents, robotics, longevity, VC row, worker
-  housing. Everything else uses the generic themed room.
-- Modes: terminal (13 live panels), x-ray (metric heat, data cards, packet
-  arcs), holomap (projected galaxy)
-- Systems: news reactivity, 19 real festivals, district ambience, personality
-  behaviour, supply chain, tutorial, daily briefing
+- Sun shadows on medium/high; sky-derived PMREM; ACES exposure 1.35
+- Modes: free-fly **C**, orbit **O**, tour **T** (+ idle screensaver), x-ray **X**,
+  holomap **H**, terminal, city map **V**, 2D bridge **P**
+- Exterior landscape (2026-07-29): countryside ground, sand beach, foam strip,
+  richer ocean, multi-layer mountain foothills + peaks with mountain texture
+- Settings: idle auto-tour on/off + idle delay (1–20 min), persisted via CityStore
 
 ---
 
@@ -146,45 +114,59 @@ draw calls** (44 meshes per car). Keep new vehicles going through it.
 Public entry is **2D**, matching production singularitycity.net:
 
 1. Site root / `/pixi/` → landing (Enter Singularity City).
-2. FP is **only** from the in-city toolbar **`🚶 FP`** (compact so ⚙️🔊🎵 fit).
-3. No landing “Walk First Person” / “Open First Person” chip.
-4. Netlify: `/` → `/pixi/` (302); FP stays at `/index.html`.
+2. FP is **only** from the in-city toolbar **`🚶 FP`**.
+3. Netlify: `/` → `/pixi/` (302); FP stays at `/index.html`.
 
 Bridge: `pixi/js/sc_integrated_bridge.js` (toolbar only). Do not re-add landing CTAs.
 
+---
+
 ## 6. Open / deferred — pick up here
 
-**Owner is playtesting — wait for their report before large new work.**
+**Owner will playtest free-fly + landscape + screensaver live — wait for notes.**
 
 **Deferred by the owner — do NOT "fix" without asking:**
 
-- **Orbit mode is permanently off the list.** The 2D version covers it. It is
-  still the original ~99-line stub and should stay that way.
+- **Orbit mode is permanently off the “improve me” list** for feature work
+  (still present as the LEO stub; free-fly **C** is the birds-eye tool now).
 - **Interior palette reads bright and pale** on upper office floors and worker
-  apartments. Lighting was measured and is correct (hemi 1.35 / ambient 0.85) —
-  it is the light-on-light palette, i.e. an art-direction decision. Owner said
-  leave it for now. This is the highest-value remaining visual work, but ask
-  first.
+  apartments — art-direction decision; ask first.
 
 **Known cosmetic / ops (not blocking playtest):**
 
 - Daytime fireworks from a news celebration look slightly odd. Brief and rare.
-- Parapet caps stay lit under the datacentre brownout on *non*-consumer
-  buildings — correct, but worth knowing if you extend the effect.
-- Console **noise** (not failures): `[v351] Redirected … from arena`, hallucinated
-  model filter, PWA `beforeinstallprompt` banner, bridge ready log.
+- Parapet caps stay lit under the datacentre brownout on *non*-consumer buildings.
+- Console noise (not failures): arena redirect, hallucinated model filter, PWA
+  install prompt, bridge ready log.
 - Netlify functions need site env **`SUPABASE_URL`** + **`SUPABASE_SERVICE_KEY`**
-  for `submit-data` writes; missing env → 404/500 on those POSTs only.
-- `netlify.toml` must stay **UTF-8 without BOM** (PowerShell `Set-Content -Encoding UTF8` adds a BOM and can break Initializing).
+  for `submit-data` writes.
 
 **Nothing from the original 2D→FP parity audit remains outstanding.**
 
-## 7. This session (2026-07-28 evening) — done
+---
+
+## 7. This session (2026-07-29) — done
+
+| Commit | What |
+|--------|------|
+| `5cc6ee7` | Free-fly **C**, richer exterior landscape textures, idle auto-tour screensaver + settings |
+
+### Feature notes for tomorrow
+
+| Feature | How to use / where |
+|---------|-------------------|
+| Free-fly | **C** — WASD, Space/Q up, Ctrl/E down, Shift boost, Alt slow. Lands under camera. |
+| Idle tour | Settings → Idle auto-tour + Idle delay. Default 5 min. Manual **T** still works. |
+| Landscape | `js/textures.js` (`water`, `sand`, `countryside`, `mountain`) + `js/world.js` `_buildWater` / `_buildHills` / base ground |
+
+**Safest next action:** apply owner playtest notes from free-fly / aerial landscape / screensaver. Do not invent large new features until they report.
+
+---
+
+## 8. Prior session (2026-07-28 evening) — done
 
 | Commit | What |
 |--------|------|
 | `22ffad5` | 2D-first entry; compact toolbar FP; landing CTAs removed |
 | `64ea79c` | Netlify deploy fix (BOM stripped; temporary no-functions) |
 | `3aeadb5` | Daily briefing crash (`ts` localeCompare); functions + favicons restored |
-
-**Safest next action:** apply owner playtest notes. Do not invent new features until they report.
