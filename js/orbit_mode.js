@@ -76,7 +76,8 @@ export const OrbitMode = {
     },
 
     enter() {
-        if (G.xrayMode || G.holomapMode || G.terminalOpen || G.tourMode) return;
+        if (G.xrayMode || G.holomapMode || G.terminalOpen || G.tourMode || G.flyMode) return;
+        // free-fly and LEO are mutually exclusive camera hijacks
         enterOrbit(this.state, G.camera, G.player);
         G.player.enabled = false;
         G.ui?.banner('🛰️ ORBIT MODE', 'LEO view · press O to return');

@@ -50,23 +50,27 @@ export const Player = {
         window.addEventListener('blur', () => { this.keys = {}; });
 
         document.addEventListener('mousemove', e => {
-            if (!this.locked || !this.enabled) return;
+            // Allow look while free-flying even if enabled is toggled elsewhere
+            if (!this.locked || (!this.enabled && !G.flyMode)) return;
             const s = 0.0021 * (G.settings.sensitivity || 1);
             this.yaw -= e.movementX * s;
             this.pitch -= e.movementY * s * (G.settings.invertY ? -1 : 1);
-            this.pitch = Math.max(-1.45, Math.min(1.45, this.pitch));
+            // freecam can look almost straight down/up for aerial framing
+            const maxPitch = G.flyMode ? 1.55 : 1.45;
+            this.pitch = Math.max(-maxPitch, Math.min(maxPitch, this.pitch));
         });
 
         // Click the world to recapture the mouse — the convention every FPS
         // has. Without it the only way back from a lost lock was the pause
         // menu, and a stray click on the canvas did nothing at all.
         G.canvas.addEventListener('mousedown', () => {
+            // Free-fly keeps pointer lock for mouse look; allow re-capture after ESC
             if (G.started && !G.panelOpen && !G.paused && !G.tourMode && !this.locked) this.lock();
         });
 
         document.addEventListener('pointerlockchange', () => {
             this.locked = document.pointerLockElement === G.canvas;
-            if (!this.locked && G.started && !G.panelOpen && !G.tourMode) {
+            if (!this.locked && G.started && !G.panelOpen && !G.tourMode && !G.flyMode) {
                 if (G._suppressPauseOnUnlock) {
                     G._suppressPauseOnUnlock = false;
                     return;
@@ -125,6 +129,14 @@ export const Player = {
 
     update(dt) {
         if (!this.enabled || G.tourMode || G.orbitMode || G.terminalOpen) return;
+        // Free-fly owns position; still apply mouse-look rotation each frame
+        if (G.flyMode) {
+            G.camera.rotation.order = 'YXZ';
+            G.camera.rotation.y = this.yaw;
+            G.camera.rotation.x = this.pitch;
+            G.camera.rotation.z = 0;
+            return;
+        }
         // Metro ride: look only — Metro attaches position each frame
         if (G.ridingMetro) {
             G.camera.rotation.order = 'YXZ';

@@ -320,6 +320,7 @@ export const UI = {
         G.paused = false;
         this.els.pauseMenu.classList.add('hidden');
         if (!G.panelOpen && !G.tourMode) G.player.lock();
+        if (G.tour?._lastInputAt != null) G.tour._lastInputAt = performance.now();
     },
 
     // ── PANELS ──────────────────────────────────────────────────────
@@ -352,6 +353,7 @@ export const UI = {
         this.els.panelOverlay.classList.add('hidden');
         G.audio?.sfx('close');
         if (!G.tourMode) G.player.lock();
+        if (G.tour?._lastInputAt != null) G.tour._lastInputAt = performance.now();
     },
     showBuilding(b) { this.showPanel('building', b); },
     showCitizen(c) {
@@ -769,8 +771,11 @@ export const UI = {
 
     // ── settings ────────────────────────────────────────────────────
     _pSettings() {
+        const idle = G.settings.idleTourMin || 5;
+        const idleOpt = (v, lbl) => `<option value="${v}" ${idle === v ? 'selected' : ''}>${lbl}</option>`;
         setTimeout(() => {
             const q = $('setQuality'), v = $('setVol'), s = $('setSens'), iy = $('setInvert'), f = $('setFov'), mu = $('setMusic'), ts = $('setTS'), rs = $('setReset');
+            const at = $('setAutoTour'), idleSel = $('setIdleTourMin');
             if (q) q.onchange = () => {
                 localStorage.setItem('sc_fp_quality', q.value);
                 if (confirm('Reload the city with ' + q.value + ' quality?')) location.reload();
@@ -785,6 +790,11 @@ export const UI = {
             if (f) f.oninput = () => { G.settings.fov = parseInt(f.value); G.camera.fov = G.settings.fov; G.camera.updateProjectionMatrix(); G.progress.save(); };
             if (mu) mu.onchange = () => { G.audio.toggleMusic(mu.checked); G.progress.save(); };
             if (ts) ts.onchange = () => { G.timeScale = parseInt(ts.value); G.settings.timeScale = G.timeScale; G.progress.save(); };
+            if (at) at.onchange = () => { G.settings.autoTour = at.checked; G.progress.save(); };
+            if (idleSel) idleSel.onchange = () => {
+                G.settings.idleTourMin = parseInt(idleSel.value) || 5;
+                G.progress.save();
+            };
             if (rs) rs.onclick = () => {
                 if (rs.dataset.armed) { localStorage.removeItem('sc_fp_save_v1'); location.reload(); }
                 rs.dataset.armed = '1'; rs.textContent = '⚠️ Click again to confirm wipe';
@@ -808,10 +818,14 @@ export const UI = {
                     <option value="60" ${G.timeScale === 60 ? 'selected' : ''}>1 hour / min</option>
                     <option value="240" ${G.timeScale === 240 ? 'selected' : ''}>4 hours / min</option>
                 </select></td></tr>
+                <tr><td>🎥 Idle auto-tour</td><td><input id="setAutoTour" type="checkbox" ${G.settings.autoTour !== false ? 'checked' : ''} title="Cinematic screensaver after you go idle"></td></tr>
+                <tr><td>⏱ Idle delay</td><td><select id="setIdleTourMin" class="btn" title="Inactivity before the tour begins">
+                    ${idleOpt(1,'1 min')}${idleOpt(3,'3 min')}${idleOpt(5,'5 min')}${idleOpt(10,'10 min')}${idleOpt(20,'20 min')}
+                </select></td></tr>
                 <tr><td>Progress</td><td><button id="setReset" class="btn">🗑 Reset save</button></td></tr>
             </table>
             <div class="lbl">Controls</div>
-            <div class="d" style="font-size:12px;color:var(--t3)">WASD move · Shift sprint · Space jump · E interact · TAB panels · M minimap · T tour · <b>P</b> 2D city · ESC pause/release mouse</div>`;
+            <div class="d" style="font-size:12px;color:var(--t3)">WASD move · Shift sprint · Space jump · E interact · <b>C</b> free-fly · TAB panels · M minimap · T tour · O orbit · <b>P</b> 2D city · ESC pause/release mouse</div>`;
     }
 };
 

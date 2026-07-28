@@ -32,6 +32,7 @@ import { Metro } from './metro.js';
 import { Jail } from './jail.js';
 import { Court } from './court.js';
 import { OrbitMode } from './orbit_mode.js';
+import { FlyMode } from './fly_mode.js';
 import { XrayMode } from './xray_mode.js';
 import { Holomap } from './holomap.js';
 import { Conference } from './conference.js';
@@ -145,6 +146,8 @@ async function boot() {
     Jail.init(G.scene);
     Court.init(G.scene);
     OrbitMode.init();
+    FlyMode.init();
+    Tour.init();
     XrayMode.init();
     Holomap.init(G.scene);
     Seasonal.init(G.scene);
@@ -163,6 +166,7 @@ async function boot() {
     G.jail = Jail;
     G.court = Court;
     G.orbitModeSys = OrbitMode;
+    G.flyModeSys = FlyMode;
     G.xrayModeSys = XrayMode;
     G.holomap = Holomap;
     G.seasonal = Seasonal;
@@ -218,11 +222,13 @@ async function boot() {
         Audio.init();
         UI.startHUD();
         UI.setWeather(Weather._label());
+        // Idle screensaver clock starts when you actually enter the city
+        if (Tour._lastInputAt != null) Tour._lastInputAt = performance.now();
         // Pointer lock needs a user gesture (autostart / from=pixi has none)
         if (startGame._gesture) Player.lock();
         else setTimeout(() => UI.addToast?.('Click the city to look around', 'info'), 500);
         Progress.unlock('first_steps');
-        setTimeout(() => UI.addToast('Tip: press <b>ESC</b> to free the mouse, or <b>P</b> for 2D City', 'info'), 2500);
+        setTimeout(() => UI.addToast('Tip: press <b>ESC</b> to free the mouse, <b>C</b> free-fly, or <b>P</b> for 2D City', 'info'), 2500);
         UI.banner('🏙️ SINGULARITY CITY', 'the entire AI industry, alive around you');
     };
     document.getElementById('enterBtn').addEventListener('click', () => {
@@ -304,6 +310,7 @@ async function boot() {
         if (G.started && CityStore.getView() !== 'map') {
             if (!G.orbitMode && !G.terminalOpen) Player.update(dt);
             Tour.update(dt);
+            FlyMode.update(dt);
             Interact.update(dt);
             Interior.update(dt);   // lift doors + the ride between floors
             Citizens.update(dt);

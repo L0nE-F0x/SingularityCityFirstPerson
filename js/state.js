@@ -38,7 +38,7 @@ export const G = {
     weatherSys: null, ui: null, audio: null, interact: null,
     // state
     started: false, paused: false, panelOpen: false, tourMode: false,
-    orbitMode: false, xrayMode: false, holomapMode: false, terminalOpen: false,
+    orbitMode: false, flyMode: false, xrayMode: false, holomapMode: false, terminalOpen: false,
     floorY: 0,          // ground level the player stands on (interiors sit low)
     inside: null,       // the building you are inside, or null
     ridingMetro: false, // camera attached to a metro car
@@ -46,7 +46,12 @@ export const G = {
     achievements: {}, visitedDistricts: {}, metCitizens: {},
     stats: { tramsSpotted: 0, moonClicks: 0 },
     flags: { konami: false, caturday: false, auroraSeen: false },
-    settings: { music: true, sfx: true, volume: 0.8, fov: 70, invertY: false, sensitivity: 1.0 },
+    settings: {
+        music: true, sfx: true, volume: 0.8, fov: 70, invertY: false, sensitivity: 1.0,
+        // Idle screensaver (mirrors 2D auto-tour prefs)
+        autoTour: true,       // start cinematic tour after idle
+        idleTourMin: 5        // minutes of inactivity before auto-tour
+    },
     // perf
     fps: 60, frameMs: 16
 };

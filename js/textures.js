@@ -572,33 +572,46 @@ let _grassGround;
 export function grassGround() {
     if (_grassGround) return _grassGround;
     const [c, x] = canvas(256, 256);
-    // base lawn
+    // richer multi-tone lawn (reads better from altitude too)
     const g = x.createLinearGradient(0, 0, 256, 256);
-    g.addColorStop(0, '#3a6b32'); g.addColorStop(0.5, '#2f5a2a'); g.addColorStop(1, '#356330');
+    g.addColorStop(0, '#3f7336');
+    g.addColorStop(0.35, '#356830');
+    g.addColorStop(0.7, '#2c5828');
+    g.addColorStop(1, '#3a6b32');
     x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+    // soft light/dark clumps
+    for (let i = 0; i < 50; i++) {
+        x.fillStyle = Math.random() < 0.5
+            ? `rgba(110,180,80,${0.06 + Math.random() * 0.1})`
+            : `rgba(30,60,25,${0.06 + Math.random() * 0.1})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 256, Math.random() * 256,
+            12 + Math.random() * 28, 8 + Math.random() * 20, Math.random(), 0, Math.PI * 2);
+        x.fill();
+    }
     // blade streaks
-    for (let i = 0; i < 2200; i++) {
+    for (let i = 0; i < 2800; i++) {
         const px = Math.random() * 256, py = Math.random() * 256;
-        const h = 4 + Math.random() * 10;
+        const h = 4 + Math.random() * 12;
         x.strokeStyle = Math.random() < 0.5
-            ? `rgba(90,160,70,${0.25 + Math.random() * 0.35})`
-            : `rgba(30,70,25,${0.2 + Math.random() * 0.3})`;
-        x.lineWidth = 0.8 + Math.random();
+            ? `rgba(100,175,75,${0.22 + Math.random() * 0.35})`
+            : `rgba(28,68,24,${0.18 + Math.random() * 0.3})`;
+        x.lineWidth = 0.7 + Math.random();
         x.beginPath();
         x.moveTo(px, py);
-        x.lineTo(px + (Math.random() - 0.5) * 3, py - h);
+        x.lineTo(px + (Math.random() - 0.5) * 3.5, py - h);
         x.stroke();
     }
     // dark patches / bare dirt
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 36; i++) {
         x.fillStyle = `rgba(60,45,30,${0.08 + Math.random() * 0.12})`;
         x.beginPath();
         x.ellipse(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 18, 5 + Math.random() * 10, Math.random(), 0, Math.PI * 2);
         x.fill();
     }
     // light flower flecks
-    for (let i = 0; i < 40; i++) {
-        x.fillStyle = Math.random() < 0.5 ? 'rgba(255,240,180,0.35)' : 'rgba(200,120,160,0.3)';
+    for (let i = 0; i < 55; i++) {
+        x.fillStyle = Math.random() < 0.5 ? 'rgba(255,240,180,0.4)' : 'rgba(200,120,160,0.35)';
         x.fillRect(Math.random() * 256, Math.random() * 256, 1.5, 1.5);
     }
     const t = tex(c);
@@ -787,22 +800,222 @@ export function lobbySign(name, emoji, accent, sub) {
 }
 
 // ─── Water ───────────────────────────────────────────────────────────────────
+// Richer coastal ocean: depth bands, soft swell stripes, specular flecks and
+// faint foam so it reads from altitude instead of a flat blue slab.
 export function water() {
-    const [c, x] = canvas(256, 256);
-    const g = x.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, '#1a3d5c'); g.addColorStop(1, '#122b44');
-    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
-    for (let i = 0; i < 60; i++) {
-        x.strokeStyle = `rgba(140,200,255,${0.05 + Math.random() * 0.12})`;
-        x.lineWidth = 1 + Math.random() * 2;
-        const y = Math.random() * 256, w = 20 + Math.random() * 80;
-        x.beginPath(); x.moveTo(Math.random() * 256, y);
-        x.lineTo(Math.random() * 256 + w, y + (Math.random() - 0.5) * 6); x.stroke();
+    const [c, x] = canvas(512, 512);
+    // deep → mid gradient base
+    const g = x.createLinearGradient(0, 0, 512, 512);
+    g.addColorStop(0, '#0c3a5c');
+    g.addColorStop(0.35, '#15608a');
+    g.addColorStop(0.7, '#1a7aa0');
+    g.addColorStop(1, '#0e4a6e');
+    x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+
+    // large-scale swell undulations
+    for (let i = 0; i < 28; i++) {
+        const y = (i / 28) * 512 + Math.sin(i * 1.7) * 8;
+        const band = x.createLinearGradient(0, y - 18, 0, y + 18);
+        band.addColorStop(0, 'rgba(40,120,160,0)');
+        band.addColorStop(0.5, `rgba(120,200,230,${0.04 + (i % 3) * 0.015})`);
+        band.addColorStop(1, 'rgba(40,120,160,0)');
+        x.fillStyle = band;
+        x.fillRect(0, y - 18, 512, 36);
     }
+
+    // shorter wave strokes
+    for (let i = 0; i < 160; i++) {
+        const y = Math.random() * 512;
+        const wx = Math.random() * 512;
+        const w = 30 + Math.random() * 140;
+        x.strokeStyle = `rgba(170,220,255,${0.04 + Math.random() * 0.1})`;
+        x.lineWidth = 0.8 + Math.random() * 2.2;
+        x.beginPath();
+        x.moveTo(wx, y);
+        x.bezierCurveTo(wx + w * 0.35, y + (Math.random() - 0.5) * 10,
+            wx + w * 0.65, y + (Math.random() - 0.5) * 10,
+            wx + w, y + (Math.random() - 0.5) * 4);
+        x.stroke();
+    }
+
+    // bright specular flecks (sun glints)
+    for (let i = 0; i < 90; i++) {
+        x.fillStyle = `rgba(230,245,255,${0.08 + Math.random() * 0.18})`;
+        x.fillRect(Math.random() * 512, Math.random() * 512, 1 + Math.random() * 3, 1);
+    }
+
+    // soft foam patches near "shore" noise
+    for (let i = 0; i < 24; i++) {
+        x.fillStyle = `rgba(210,235,245,${0.05 + Math.random() * 0.08})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 512, Math.random() * 512,
+            18 + Math.random() * 50, 6 + Math.random() * 14, Math.random() * Math.PI, 0, Math.PI * 2);
+        x.fill();
+    }
+
+    // subtle depth mottling
+    for (let i = 0; i < 40; i++) {
+        x.fillStyle = `rgba(8,40,70,${0.04 + Math.random() * 0.07})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 512, Math.random() * 512,
+            20 + Math.random() * 60, 14 + Math.random() * 40, Math.random(), 0, Math.PI * 2);
+        x.fill();
+    }
+
     const t = tex(c);
     t.wrapS = t.wrapT = THREE.RepeatWrapping;
-    t.repeat.set(30, 30);
+    t.repeat.set(18, 18);
     return t;
+}
+
+// ─── Beach sand ──────────────────────────────────────────────────────────────
+let _sand;
+export function sand() {
+    if (_sand) return _sand;
+    const [c, x] = canvas(256, 256);
+    const g = x.createLinearGradient(0, 0, 256, 256);
+    g.addColorStop(0, '#e2c992');
+    g.addColorStop(0.5, '#d4b878');
+    g.addColorStop(1, '#c9a96a');
+    x.fillStyle = g; x.fillRect(0, 0, 256, 256);
+    // grain
+    for (let i = 0; i < 5000; i++) {
+        const v = Math.random();
+        x.fillStyle = v < 0.5
+            ? `rgba(255,245,210,${Math.random() * 0.18})`
+            : `rgba(120,90,50,${Math.random() * 0.14})`;
+        x.fillRect(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 1.5, 1 + Math.random() * 1.5);
+    }
+    // wetter dark band stripes (tide marks)
+    for (let i = 0; i < 6; i++) {
+        x.fillStyle = `rgba(90,70,45,${0.06 + Math.random() * 0.06})`;
+        x.fillRect(0, 20 + i * 40 + Math.random() * 8, 256, 3 + Math.random() * 5);
+    }
+    // shells / pebbles
+    for (let i = 0; i < 40; i++) {
+        x.fillStyle = Math.random() < 0.5 ? 'rgba(220,210,190,0.35)' : 'rgba(160,140,120,0.3)';
+        x.beginPath();
+        x.ellipse(Math.random() * 256, Math.random() * 256, 1 + Math.random() * 2.5, 0.8 + Math.random() * 1.5, Math.random(), 0, Math.PI * 2);
+        x.fill();
+    }
+    _sand = tex(c);
+    _sand.wrapS = _sand.wrapT = THREE.RepeatWrapping;
+    return _sand;
+}
+
+// ─── Countryside / outer-world grass (large-scale aerial read) ───────────────
+let _countryside;
+export function countryside() {
+    if (_countryside) return _countryside;
+    const [c, x] = canvas(512, 512);
+    // soft meadow base
+    const g = x.createLinearGradient(0, 0, 512, 512);
+    g.addColorStop(0, '#3d6a34');
+    g.addColorStop(0.4, '#4a7a3c');
+    g.addColorStop(0.7, '#356330');
+    g.addColorStop(1, '#2f5a2a');
+    x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+
+    // field patches (visible from altitude)
+    for (let i = 0; i < 22; i++) {
+        const hue = Math.random() < 0.35 ? '70,100,40' : (Math.random() < 0.5 ? '55,90,45' : '40,75,35');
+        x.fillStyle = `rgba(${hue},${0.12 + Math.random() * 0.18})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 512, Math.random() * 512,
+            40 + Math.random() * 100, 30 + Math.random() * 70, Math.random() * Math.PI, 0, Math.PI * 2);
+        x.fill();
+    }
+
+    // dirt / path streaks
+    for (let i = 0; i < 10; i++) {
+        x.strokeStyle = `rgba(90,70,40,${0.08 + Math.random() * 0.1})`;
+        x.lineWidth = 4 + Math.random() * 10;
+        x.beginPath();
+        let px = Math.random() * 512, py = Math.random() * 512;
+        x.moveTo(px, py);
+        for (let k = 0; k < 5; k++) {
+            px += (Math.random() - 0.5) * 120;
+            py += (Math.random() - 0.5) * 120;
+            x.lineTo(px, py);
+        }
+        x.stroke();
+    }
+
+    // fine grass noise
+    for (let i = 0; i < 8000; i++) {
+        x.fillStyle = Math.random() < 0.5
+            ? `rgba(100,170,70,${Math.random() * 0.2})`
+            : `rgba(25,55,20,${Math.random() * 0.15})`;
+        x.fillRect(Math.random() * 512, Math.random() * 512, 1.2, 1.2);
+    }
+
+    // sparse tree-canopy dots (read as forest freckles from the sky)
+    for (let i = 0; i < 120; i++) {
+        x.fillStyle = `rgba(30,70,28,${0.15 + Math.random() * 0.25})`;
+        x.beginPath();
+        x.arc(Math.random() * 512, Math.random() * 512, 2 + Math.random() * 5, 0, Math.PI * 2);
+        x.fill();
+    }
+
+    _countryside = tex(c);
+    _countryside.wrapS = _countryside.wrapT = THREE.RepeatWrapping;
+    return _countryside;
+}
+
+// ─── Mountain / hill surface (forest base → rock → pale ridge) ───────────────
+let _mountain;
+export function mountain() {
+    if (_mountain) return _mountain;
+    const [c, x] = canvas(512, 512);
+    // vertical biome: deep forest → alpine meadow → rock → snow fleck
+    const g = x.createLinearGradient(0, 512, 0, 0);
+    g.addColorStop(0, '#2a4024');
+    g.addColorStop(0.25, '#3d5c32');
+    g.addColorStop(0.5, '#5a6b48');
+    g.addColorStop(0.72, '#7a7568');
+    g.addColorStop(0.88, '#9a9588');
+    g.addColorStop(1, '#e8eef4');
+    x.fillStyle = g; x.fillRect(0, 0, 512, 512);
+
+    // rock strata
+    for (let i = 0; i < 40; i++) {
+        const y = Math.random() * 512;
+        x.strokeStyle = `rgba(60,55,48,${0.08 + Math.random() * 0.14})`;
+        x.lineWidth = 1 + Math.random() * 3;
+        x.beginPath();
+        x.moveTo(0, y);
+        for (let s = 0; s < 8; s++) x.lineTo(s * 64 + Math.random() * 20, y + (Math.random() - 0.5) * 18);
+        x.stroke();
+    }
+
+    // forest mottling on lower half
+    for (let i = 0; i < 200; i++) {
+        const py = 200 + Math.random() * 312;
+        x.fillStyle = `rgba(25,55,22,${0.1 + Math.random() * 0.2})`;
+        x.beginPath();
+        x.arc(Math.random() * 512, py, 3 + Math.random() * 10, 0, Math.PI * 2);
+        x.fill();
+    }
+
+    // snow / highlight noise on upper band
+    for (let i = 0; i < 600; i++) {
+        const py = Math.random() * 180;
+        x.fillStyle = `rgba(255,255,255,${0.08 + Math.random() * 0.25})`;
+        x.fillRect(Math.random() * 512, py, 1 + Math.random() * 3, 1 + Math.random() * 2);
+    }
+
+    // cliff shadow flecks
+    for (let i = 0; i < 80; i++) {
+        x.fillStyle = `rgba(20,22,28,${0.06 + Math.random() * 0.12})`;
+        x.beginPath();
+        x.ellipse(Math.random() * 512, Math.random() * 512,
+            8 + Math.random() * 30, 4 + Math.random() * 16, Math.random(), 0, Math.PI * 2);
+        x.fill();
+    }
+
+    _mountain = tex(c);
+    _mountain.wrapS = _mountain.wrapT = THREE.RepeatWrapping;
+    return _mountain;
 }
 
 // ─── Blimp side panel ────────────────────────────────────────────────────────

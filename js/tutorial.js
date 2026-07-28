@@ -248,7 +248,13 @@ const STEPS = [
     {
         chapter: 'Chapter 4 · Tools',
         title: 'Auto-tour',
-        body: "Press <b>T</b> and the camera flies a cinematic circuit of thirty landmarks with captions, exactly like the flights in this walkthrough. Any key hands control back. Sit through the whole thing for an achievement.",
+        body: "Press <b>T</b> and the camera flies a cinematic circuit of thirty landmarks with captions, exactly like the flights in this walkthrough. Any key hands control back. Sit through the whole thing for an achievement. Leave the tab alone and the same tour starts itself as a screensaver — the delay is under Settings.",
+        target: null
+    },
+    {
+        chapter: 'Chapter 4 · Tools',
+        title: 'Free-fly',
+        body: "<b>C</b> unlocks the camera from the street so you can soar over the city — WASD, Space/Q up, Ctrl/E down, Shift to boost. Perfect for a bird's-eye look at the skyline, sea and hills. Press <b>C</b> again to land.",
         target: null
     },
     {

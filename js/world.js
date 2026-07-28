@@ -316,10 +316,13 @@ export const World = {
 
     // ── GROUND / ROADS / PAVEMENT ────────────────────────────────────────────
     _buildGround(scene) {
-        // World base
+        // World base — countryside texture so free-fly / birds-eye views
+        // beyond the city edge read as fields and meadows, not a flat green void.
+        const countryTex = TEX.countryside();
+        countryTex.repeat.set(48, 48);
         const base = new THREE.Mesh(
-            new THREE.PlaneGeometry(24000, 24000),
-            new THREE.MeshLambertMaterial({ color: 0x2a3324 })
+            new THREE.PlaneGeometry(28000, 28000),
+            new THREE.MeshLambertMaterial({ map: countryTex, color: 0xa8c890 })
         );
         base.rotation.x = -Math.PI / 2; base.position.y = -2;
         base.name = 'ground';
@@ -1947,22 +1950,65 @@ export const World = {
     // ── WATER + BEACH ────────────────────────────────────────────────────────
     _buildWater(scene) {
         this.waterTex = TEX.water();
+        // Larger ocean so birds-eye / free-fly still sees water to the horizon
         const w = new THREE.Mesh(
-            new THREE.PlaneGeometry(6000, CITY_D + 6000),
-            new THREE.MeshPhongMaterial({ map: this.waterTex, color: 0x9fc8e8, shininess: 120, specular: 0x88bbee })
+            new THREE.PlaneGeometry(10000, CITY_D + 9000, 1, 1),
+            new THREE.MeshPhongMaterial({
+                map: this.waterTex,
+                color: 0xb8dcf0,
+                shininess: 160,
+                specular: 0xaad4f0,
+                reflectivity: 0.35
+            })
         );
         w.rotation.x = -Math.PI / 2;
-        w.position.set(SEA_X - 2900, -0.6, 0);
+        w.position.set(SEA_X - 4800, -0.6, 0);
         w.name = 'water';
         scene.add(w);
-        // beach
+
+        // Foam strip where water meets the beach
+        const foam = new THREE.Mesh(
+            new THREE.PlaneGeometry(90, CITY_D + 800),
+            new THREE.MeshLambertMaterial({
+                color: 0xdceef8,
+                transparent: true,
+                opacity: 0.55,
+                depthWrite: false
+            })
+        );
+        foam.rotation.x = -Math.PI / 2;
+        foam.position.set(SEA_X - 35, -0.35, 0);
+        foam.name = 'water';
+        foam.userData.noShadow = true;
+        scene.add(foam);
+
+        // Beach with sand texture (readable from altitude)
+        const sandTex = TEX.sand();
+        sandTex.repeat.set(4, 48);
         const beach = new THREE.Mesh(
-            new THREE.PlaneGeometry(260, CITY_D + 400),
-            new THREE.MeshLambertMaterial({ color: 0xd8c08a })
+            new THREE.PlaneGeometry(320, CITY_D + 600),
+            new THREE.MeshStandardMaterial({
+                map: sandTex,
+                color: 0xf0e0b8,
+                roughness: 0.92,
+                metalness: 0.0,
+                envMapIntensity: ENV_I * 0.35
+            })
         );
         beach.rotation.x = -Math.PI / 2;
-        beach.position.set(SEA_X + 10, 0.15, 0);
+        beach.position.set(SEA_X + 20, 0.15, 0);
+        beach.userData.shadowReceiveOnly = true;
         scene.add(beach);
+
+        // Wet sand band (darker, closer to the water)
+        const wet = new THREE.Mesh(
+            new THREE.PlaneGeometry(70, CITY_D + 500),
+            new THREE.MeshLambertMaterial({ color: 0xb89a68 })
+        );
+        wet.rotation.x = -Math.PI / 2;
+        wet.position.set(SEA_X - 5, 0.18, 0);
+        wet.userData.shadowReceiveOnly = true;
+        scene.add(wet);
     },
 
     // ── AI INDEX BILLBOARD PANEL ─────────────────────────────────────────────
@@ -1986,32 +2032,94 @@ export const World = {
         });
     },
 
-    // ── DISTANT HILLS ────────────────────────────────────────────────────────
+    // ── DISTANT HILLS / MOUNTAINS ────────────────────────────────────────────
+    // Multi-layer range: large forested foothills + taller rocky peaks with a
+    // shared mountain texture so aerial / free-fly views read as real terrain
+    // instead of flat green cones.
     _buildHills(scene) {
-        const geo = new THREE.ConeGeometry(1, 1, 7);
-        geo.translate(0, 0.5, 0);
-        const spots = [];
-        // Pushed out with the city: the grid is 5x5 now, so its half-diagonal
-        // reaches ~3400 and hills at the old 3900 would have stood in the
-        // outskirts rather than on the horizon.
-        for (let i = 0; i < 42 && spots.length < 42; i++) {
-            const a = (i / 42) * Math.PI * 2 + rng() * 0.12;
-            const r = 4700 + rng() * 1500;
-            const hx = Math.cos(a) * r + 1200;
-            if (hx < SEA_X + 200) continue;   // keep the hills out of the sea
-            spots.push({ x: hx, z: Math.sin(a) * r });
+        const foothillGeo = new THREE.ConeGeometry(1, 1, 9);
+        foothillGeo.translate(0, 0.5, 0);
+        // Slightly more radial segments + a second peak mesh for ridgelines
+        const peakGeo = new THREE.ConeGeometry(1, 1, 8);
+        peakGeo.translate(0, 0.5, 0);
+
+        const foothills = [];
+        const peaks = [];
+        // Ring around the city — denser than before so the horizon feels full
+        for (let i = 0; i < 64; i++) {
+            const a = (i / 64) * Math.PI * 2 + rng() * 0.1;
+            const r = 4600 + rng() * 1800;
+            const hx = Math.cos(a) * r + 1100;
+            const hz = Math.sin(a) * r;
+            if (hx < SEA_X + 250) continue;   // keep the range out of the ocean
+            foothills.push({
+                x: hx, z: hz,
+                sx: 480 + rng() * 820,
+                sy: 160 + rng() * 280,
+                sz: 480 + rng() * 820,
+                ry: rng() * Math.PI
+            });
+            // Every other foothill gets a taller rocky peak on top of the ring
+            if (i % 2 === 0) {
+                peaks.push({
+                    x: hx + (rng() - 0.5) * 200,
+                    z: hz + (rng() - 0.5) * 200,
+                    sx: 280 + rng() * 420,
+                    sy: 280 + rng() * 420,
+                    sz: 280 + rng() * 420,
+                    ry: rng() * Math.PI
+                });
+            }
         }
-        const hills = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: 0x33402e }), spots.length);
-        hills.name = 'hills';
-        const dummy = new THREE.Object3D();
-        spots.forEach((s, i) => {
-            dummy.position.set(s.x, -4, s.z);
-            dummy.scale.set(500 + rng() * 700, 180 + rng() * 260, 500 + rng() * 700);
-            dummy.rotation.y = rng() * Math.PI;
-            dummy.updateMatrix();
-            hills.setMatrixAt(i, dummy.matrix);
+        // A few far outer "snow ridge" mountains for depth from altitude
+        for (let i = 0; i < 14; i++) {
+            const a = (i / 14) * Math.PI * 2 + 0.4;
+            const r = 6200 + rng() * 900;
+            const hx = Math.cos(a) * r + 900;
+            if (hx < SEA_X + 400) continue;
+            peaks.push({
+                x: hx, z: Math.sin(a) * r,
+                sx: 600 + rng() * 500,
+                sy: 420 + rng() * 380,
+                sz: 600 + rng() * 500,
+                ry: rng() * Math.PI
+            });
+        }
+
+        const mtnTex = TEX.mountain();
+        mtnTex.repeat.set(2, 2);
+        const foothillMat = new THREE.MeshLambertMaterial({
+            map: mtnTex, color: 0x8fad78
         });
-        scene.add(hills);
+        const peakMat = new THREE.MeshLambertMaterial({
+            map: mtnTex, color: 0xc8c4b8
+        });
+
+        const dummy = new THREE.Object3D();
+        if (foothills.length) {
+            const mesh = new THREE.InstancedMesh(foothillGeo, foothillMat, foothills.length);
+            mesh.name = 'hills';
+            foothills.forEach((s, i) => {
+                dummy.position.set(s.x, -8, s.z);
+                dummy.scale.set(s.sx, s.sy, s.sz);
+                dummy.rotation.set((rng() - 0.5) * 0.08, s.ry, (rng() - 0.5) * 0.08);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+            });
+            scene.add(mesh);
+        }
+        if (peaks.length) {
+            const mesh = new THREE.InstancedMesh(peakGeo, peakMat, peaks.length);
+            mesh.name = 'hills';
+            peaks.forEach((s, i) => {
+                dummy.position.set(s.x, -6, s.z);
+                dummy.scale.set(s.sx, s.sy, s.sz);
+                dummy.rotation.set((rng() - 0.5) * 0.05, s.ry, (rng() - 0.5) * 0.05);
+                dummy.updateMatrix();
+                mesh.setMatrixAt(i, dummy.matrix);
+            });
+            scene.add(mesh);
+        }
     },
 
     /* Point the sun at the player and park the shadow frustum on them.
@@ -2091,8 +2199,9 @@ export const World = {
             }
         }
         if (this.waterTex) {
-            this.waterTex.offset.x = t * 0.008;
-            this.waterTex.offset.y = Math.sin(t * 0.1) * 0.03;
+            // Gentle dual-axis drift so the ocean shimmers from altitude
+            this.waterTex.offset.x = t * 0.006;
+            this.waterTex.offset.y = t * 0.0035 + Math.sin(t * 0.12) * 0.02;
         }
     }
 };
