@@ -1,7 +1,7 @@
 # Parity with the production 2D app
 
 Tracking first-person vs production `ApexForge/SingularityCity` (read-only).  
-**Updated:** 2026-07-27 (rendering overhaul + content parity pass).
+**Updated:** 2026-07-28 (parity backlog closed — see RESUME.md for live status).
 
 **North star:** switching FP ↔ 2D should feel like **same city, different camera**.  
 You should be able to go **anywhere** you can go in the 2D app.
@@ -93,11 +93,26 @@ These override stale “[x] done” claims elsewhere when they conflict with liv
 - [x] Vehicles merged by material — `ambientCars` alone was **614 draw calls** (44 meshes/car)
 - Net: ~1400 → **~570 draw calls** despite 3x the buildings
 
-### Still open
-- [ ] `holomap.js` / `orbit_mode.js` still far thinner than the 2D originals
-- [ ] Interiors for robotics / longevity / VC row / worker apartments
-- [ ] Tutorial, daily briefing, goal + personality *behaviour* (data exists, not wired)
-- [ ] Supply-chain simulation (Port→DC delivery, shortage → DC facade dimming)
+### Closed since (2026-07-28)
+- [x] **Holomap** rebuilt as a projected galaxy; **x-ray** rebuilt with metric
+      heat, floating data cards and packet arcs
+- [x] Interiors for **robotics, longevity, VC row and worker apartments**
+- [x] **Tutorial** (30 steps, DOM spotlight, camera flights) and **daily
+      briefing** (MediaRecorder news reel)
+- [x] **Personality behaviour** — traits derived from benchmarks/talent/arch/name
+      drive walk speed, free-time venue and chat
+- [x] **Supply-chain simulation** — ships → stock → trucks → datacentre draw,
+      with starved buildings browning out
+- [x] **Interior scale** corrected (`ROOM_SCALE`) and the **elevator** made a
+      real ride with doors, travel and ground-floor-only exit
+
+### Deliberately not doing
+- **Orbit mode** — owner closed it; the 2D app covers that view. `orbit_mode.js`
+  stays a stub. Do not list it as a gap.
+
+### Deferred (owner decision pending)
+- Interior palette on upper office floors / worker apartments reads bright and
+  pale. Lighting measured correct; it is an art-direction call.
 
 ---
 

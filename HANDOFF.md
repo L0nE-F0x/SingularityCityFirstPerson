@@ -1,6 +1,7 @@
 ﻿# Handoff — Singularity City: First Person
 
-> **STATUS SUPERSEDED (2026-07-23):** Live status is `RESUME.md` + `PARITY.md` (owner backlog).  
+> **STATUS SUPERSEDED (2026-07-28):** Live status is **`RESUME.md`** — read that first.  
+> `PARITY.md` tracks 2D→FP feature parity (backlog now closed).  
 > This file remains useful for **perf doctrine**, agent testing traps, and bug archaeology.  
 > Mid-file line counts / “deliberate simplifications” are outdated after parity + polish passes.
 
