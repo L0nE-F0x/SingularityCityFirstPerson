@@ -9,22 +9,22 @@
 ## What this folder is now
 
 ```
-SingularityCityFirstPerson/          ← candidate future production
-  home.html                          ← chooser (2D or FP)
-  index.html + js/ + lib/            ← Three.js first-person
-  pixi/                              ← FULL copy of production Pixi 2D app
-    index.html
-    js/… (100 modules + sc_integrated_bridge.js)
+SingularityCityFirstPerson/          candidate future production
+  home.html                          redirects to /pixi/ (2D entry)
+  index.html + js/ + lib/            Three.js first-person (not the public entry)
+  pixi/                              FULL copy of production Pixi 2D app
+    index.html                       Landing + city (public entry)
+    js/… + sc_integrated_bridge.js
     css/, data/, textures/, netlify/, …
-  js/store/                          ← CityStore, live, nav hard-swap
-  js/shell.js                        ← FP chrome + map overview + 2D City button
+  js/store/                          CityStore, live, nav hard-swap
+  js/shell.js                        FP chrome + map overview + 2D City button
 ```
 
 | View | URL (local) | How to reach the other |
 |------|-------------|-------------------------|
-| Chooser | `/home.html` | — |
-| First Person | `/` or `/index.html` | **P** or toolbar **2D City** → `/pixi/` |
-| Pixi 2D | `/pixi/` | Toolbar **First Person**, landing **Walk First Person**, top chip |
+| **2D (public entry)** | `/pixi/` (Netlify `/` → `/pixi/`) | Landing → **Enter Singularity City** |
+| First Person | `/index.html` | **Only** from 2D toolbar **FP** (not from landing) |
+| Dev shortcut | `/home.html` | Redirects to `/pixi/` |
 
 Hard-swap uses a full navigation (dispose one renderer, load the other). Resume tokens: `sc_view_resume_v1`. Shared progress: `sc_city_save_v1` (+ legacy FP / soft-merge Pixi `sc_data` achievements).
 
@@ -45,9 +45,9 @@ Coordinate systems differ (Pixi linear X vs FP grid). Identity is district/build
 ```powershell
 cd "C:\Users\TempleLodge\Desktop\SingularityCityFirstPerson"
 python serve.py 8931
-# Chooser:        http://127.0.0.1:8931/home.html
-# First Person:   http://127.0.0.1:8931/
-# Pixi 2D:        http://127.0.0.1:8931/pixi/
+# 2D landing/city:  http://127.0.0.1:8931/pixi/
+# First Person:     http://127.0.0.1:8931/index.html  (prefer toolbar 🚶 FP from 2D)
+# home.html:        redirects to /pixi/
 ```
 
 Tests:
@@ -67,7 +67,7 @@ node tests/store_check.mjs
 | `js/store/nav.js` | FP → Pixi hard-swap |
 | `js/store/city_store.js` | Shared brain (FP side; Pixi uses same localStorage keys) |
 | `js/shell.js` | FP shell + map overview + **2D City** |
-| `home.html` | Dual entry |
+| `home.html` | Redirects to 2D `/pixi/` |
 
 ---
 

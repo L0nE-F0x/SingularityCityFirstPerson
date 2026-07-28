@@ -1,7 +1,12 @@
-﻿/* ============================================================================
+/* ============================================================================
    SC Integrated Bridge — runs inside the vendored Pixi 2D copy (pixi/).
    Does NOT touch ApexForge production. Adds First Person navigation and
    shared progress keys with the Three.js FP app at the repo root.
+
+   Product flow (owner 2026-07-28):
+   - Landing page is pure 2D — no "Walk First Person" / "Open First Person" chips.
+   - FP is reachable only from the in-city top toolbar button.
+   - That button stays compact so the music control still fits on laptop widths.
    ============================================================================ */
 (function () {
     'use strict';
@@ -97,33 +102,34 @@
     function goFirstPerson() {
         mergeProgressIntoCitySave();
         var token = captureResume();
-        // Soft pause music if present
-        try {
-            if (typeof SND !== 'undefined' && SND.musicEnabled && SND.toggleMusic) {
-                /* leave music state; FP has its own audio graph */
-            }
-            if (typeof G !== 'undefined' && G.app && G.app.ticker) G.app.ticker.stop();
-        } catch (e) { /* ignore */ }
+        // Do NOT stop the Pixi ticker here. If navigation is cancelled or the
+        // FP URL 404s, a stopped ticker leaves a frozen/black 2D city.
         window.location.href = fpUrl(token);
     }
 
     function injectStyles() {
         if (document.getElementById('sc-bridge-style')) return;
+        document.documentElement.classList.add('sc-integrated');
         var s = document.createElement('style');
         s.id = 'sc-bridge-style';
+        // Compact the whole control bar slightly so the injected FP button does
+        // not push 🔊 / 🎵 off the right edge on ~1280–1440px laptop widths.
         s.textContent = [
-            '.sc-fp-btn{background:linear-gradient(135deg,#be185d,#7c3aed)!important;',
-            'border-color:#f472b6!important;color:#fff!important;font-weight:700!important}',
-            '.sc-fp-btn:hover{filter:brightness(1.08)}',
-            '.land-fp{margin-left:10px;background:linear-gradient(135deg,#be185d,#7c3aed);',
-            'color:#fff;border:0;border-radius:10px;padding:14px 18px;font:700 14px/1 system-ui,sans-serif;',
-            'cursor:pointer;box-shadow:0 8px 24px rgba(190,24,93,.35)}',
-            '.land-fp:hover{filter:brightness(1.06)}',
-            '.sc-bridge-banner{position:fixed;top:0;left:0;right:0;z-index:99999;pointer-events:none;',
-            'display:flex;justify-content:center;padding:8px;font:12px/1.3 JetBrains Mono,monospace}',
-            '.sc-bridge-banner span{pointer-events:auto;background:rgba(7,11,20,.88);color:#e2e8f0;',
-            'border:1px solid rgba(244,114,182,.4);border-radius:999px;padding:6px 12px}',
-            '.sc-bridge-banner a{color:#f9a8d4;margin-left:8px;font-weight:700}'
+            'html.sc-integrated #ctrlBar .btn{',
+            'padding:5px 7px;font-size:9px;gap:4px}',
+            'html.sc-integrated #ctrlBar .btn .btn-label{display:none}',
+            /* Compact FP control — mode sibling of Holomap, not a hero CTA */
+            'html.sc-integrated #ctrlBar .sc-fp-btn{',
+            'background:linear-gradient(135deg,#9d174d,#6d28d9)!important;',
+            'border-color:rgba(244,114,182,.55)!important;color:#fff!important;',
+            'font-weight:700!important;padding:5px 8px!important;font-size:9px!important;',
+            'letter-spacing:0;min-width:0}',
+            'html.sc-integrated #ctrlBar .sc-fp-btn:hover{filter:brightness(1.08)}',
+            /* Music is injected with marginLeft:8px — reclaim a few px */
+            'html.sc-integrated #btnMusic{margin-left:4px!important}',
+            /* Ensure the horizontal strip can scroll if the viewport is very narrow */
+            'html.sc-integrated .ctrls{overflow-x:auto;overflow-y:hidden}',
+            'html.sc-integrated .ctrls-scroll{scrollbar-width:thin}'
         ].join('');
         document.head.appendChild(s);
     }
@@ -134,47 +140,74 @@
         var btn = document.createElement('button');
         btn.className = 'btn sc-fp-btn';
         btn.id = 'btnFirstPerson';
-        btn.title = 'Walk the city in first person (Three.js view in this integrated build)';
-        btn.textContent = '🚶 First Person';
+        btn.type = 'button';
+        btn.title = 'Walk the city in first person';
+        btn.setAttribute('aria-label', 'First Person');
+        // Short label keeps ⚙️ 🔊 🎵 on-screen. Full name lives in the tooltip.
+        btn.textContent = '🚶 FP';
         btn.addEventListener('click', function (e) {
             e.preventDefault();
             if (typeof UI !== 'undefined' && UI.uiClick) UI.uiClick();
             goFirstPerson();
         });
-        // Prefer near holomap
+        // Prefer near holomap (view-mode cluster)
         var macro = document.getElementById('btnMacro');
         if (macro && macro.parentNode === bar) bar.insertBefore(btn, macro.nextSibling);
-        else bar.appendChild(btn);
+        else {
+            // Fall back: insert before settings/sound cluster so it stays a "mode"
+            var settings = bar.querySelector('button[title="Settings"]') || document.getElementById('btnSound');
+            if (settings && settings.parentNode === bar) bar.insertBefore(btn, settings);
+            else bar.appendChild(btn);
+        }
     }
 
-    function injectLandingButton() {
-        var enter = document.querySelector('.land-enter');
-        if (!enter || document.getElementById('landFirstPerson')) return;
-        var wrap = enter.parentNode;
-        var b = document.createElement('button');
-        b.id = 'landFirstPerson';
-        b.className = 'land-fp';
-        b.type = 'button';
-        b.textContent = '🚶 Walk First Person';
-        b.title = 'Skip the top-down city and enter the first-person streets';
-        b.addEventListener('click', function (e) {
-            e.preventDefault();
-            goFirstPerson();
-        });
-        if (wrap) wrap.insertBefore(b, enter.nextSibling);
+    /** Remove legacy dual-entry affordances if a cached HTML still had them. */
+    function stripLandingFpEntries() {
+        var land = document.getElementById('landFirstPerson');
+        if (land && land.parentNode) land.parentNode.removeChild(land);
+        var chip = document.getElementById('scBridgeChip');
+        if (chip && chip.parentNode) chip.parentNode.removeChild(chip);
+        // Older banner variants
+        var banners = document.querySelectorAll('.sc-bridge-banner');
+        for (var i = 0; i < banners.length; i++) {
+            if (banners[i].parentNode) banners[i].parentNode.removeChild(banners[i]);
+        }
     }
 
-    function injectCornerChip() {
-        if (document.getElementById('scBridgeChip')) return;
-        var d = document.createElement('div');
-        d.id = 'scBridgeChip';
-        d.className = 'sc-bridge-banner';
-        d.innerHTML = '<span>INTEGRATED BUILD · 2D + FP in one repo <a href="#" id="scBridgeFpLink">Open First Person →</a></span>';
-        document.body.appendChild(d);
-        document.getElementById('scBridgeFpLink').addEventListener('click', function (e) {
-            e.preventDefault();
-            goFirstPerson();
-        });
+    /**
+     * After the city boots, make sure the Pixi canvas is actually drawing.
+     * A stuck loader or a ticker that never started presents as a black void
+     * with chrome (toolbar/minimap) still visible — the report we got in playtest.
+     */
+    function ensureCityVisible() {
+        var tries = 0;
+        var iv = setInterval(function () {
+            tries++;
+            var loader = document.getElementById('sc-loader');
+            var gw = document.getElementById('gameWrap');
+            var ready = typeof G !== 'undefined' && G.app && G.app.ticker;
+
+            if (ready && gw && gw.classList.contains('active')) {
+                // Force-dismiss loader if it got stuck at 100%
+                if (loader) {
+                    loader.classList.add('hidden');
+                    loader.style.display = 'none';
+                }
+                try {
+                    if (G.app.ticker && !G.app.ticker.started) G.app.ticker.start();
+                } catch (e) { /* ignore */ }
+                // If minimap zone list is empty after boot, rebuild it
+                try {
+                    var zones = document.getElementById('mmZones');
+                    if (zones && zones.children.length === 0 && typeof G.initMinimap === 'function') {
+                        G.initMinimap();
+                    }
+                } catch (e2) { /* ignore */ }
+                clearInterval(iv);
+                return;
+            }
+            if (tries > 60) clearInterval(iv); // ~30s
+        }, 500);
     }
 
     function applyIncomingResume() {
@@ -201,7 +234,6 @@
                 // Auto-enter city if still on landing
                 if (typeof enterCity === 'function' && document.getElementById('landing') &&
                     getComputedStyle(document.getElementById('landing')).display !== 'none') {
-                    // only auto-enter when coming from FP toggle
                     if (token.from === 'fp') enterCity();
                 }
             } catch (e4) { /* ignore */ }
@@ -225,13 +257,14 @@
 
     function boot() {
         injectStyles();
+        stripLandingFpEntries();
         injectToolbarButton();
-        injectLandingButton();
-        injectCornerChip();
         applyIncomingResume();
-        // Re-inject toolbar if ctrl bar mounts late
+        ensureCityVisible();
+        // Re-inject toolbar if ctrl bar mounts late; keep stripping landing CTAs
         var n = 0;
         var t = setInterval(function () {
+            stripLandingFpEntries();
             injectToolbarButton();
             n++;
             if (n > 40) clearInterval(t);
@@ -243,7 +276,7 @@
             mergeProgress: mergeProgressIntoCitySave,
             captureResume: captureResume
         };
-        console.log('[SC Bridge] Integrated 2D↔FP bridge ready');
+        console.log('[SC Bridge] Integrated 2D→FP bridge ready (toolbar only)');
     }
 
     if (document.readyState === 'loading') {

@@ -1,13 +1,68 @@
-# Static first-person city — no build step; ES modules + vendored Three.js in lib/
+﻿# Integrated app: Pixi 2D under /pixi/ + First Person at /index.html
+# Product entry is the 2D landing (/pixi/); FP is only linked from the 2D toolbar.
+
 [build]
   publish = "."
-  command = "echo Static site — no build required"
+  command = "echo Static integrated site - no build required"
 
-# Ensure correct MIME / caching for modules and CSS
+[functions]
+  directory = "pixi/netlify/functions"
+
+# --- Prefer 2D as the site entry (production-like flow) ---
+# force=true so root index.html (FP) is not served at "/".
+# FP remains available at /index.html (toolbar link from 2D uses that path).
+[[redirects]]
+  from = "/"
+  to = "/pixi/"
+  status = 302
+  force = true
+
+# --- CORS / API proxies (same as production 2D) so /pixi works on this host ---
+[[redirects]]
+  from = "/api/hf/*"
+  to = "https://huggingface.co/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/zeroeval/*"
+  to = "https://api.zeroeval.com/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/openrouter/*"
+  to = "https://openrouter.ai/api/v1/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/arxiv/*"
+  to = "https://export.arxiv.org/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/celestrak/*"
+  to = "https://celestrak.org/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/orbit-sats"
+  to = "/.netlify/functions/orbit-sats"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/api/geo"
+  to = "/.netlify/functions/geo"
+  status = 200
+  force = true
+
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
@@ -25,3 +80,8 @@
   for = "/css/*"
   [headers.values]
     Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/pixi/sw.js"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
