@@ -40,6 +40,7 @@ import { Kardashev } from './kardashev.js';
 import { Wetness } from './wetness.js';
 import { Ambience } from './ambience.js';
 import { NewsReactivity } from './news_reactivity.js';
+import { SupplyChain } from './supply_chain.js';
 import { Tutorial } from './tutorial.js';
 import { DailyBriefing } from './daily_briefing.js';
 import { Terminal } from './terminal.js';
@@ -151,6 +152,10 @@ async function boot() {
     Wetness.init(G.scene);
     Ambience.init(G.scene);
     G.ambience = Ambience;
+    // after World.build: it needs the per-building instance handles to brown
+    // out a starved datacentre without dimming the whole city
+    SupplyChain.init(G.scene);
+    G.supplyChain = SupplyChain;
     Terminal.init();
     G.vcDealFlow = VCDealFlow;
     G.researchPapers = ResearchPapers;
@@ -323,6 +328,7 @@ async function boot() {
             Kardashev.update(dt);
             Wetness.update(dt);
             Ambience.update(dt, G.time);
+            SupplyChain.update(dt);
             // after Weather: the crisis flicker overrides the window emissive ramp
             NewsReactivity.update(dt);
             // last: both take the camera, so they must run after Player/Tour

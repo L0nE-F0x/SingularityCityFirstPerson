@@ -21,6 +21,7 @@ import { conferenceStatus } from '../js/conference.js';
 import { seasonForDate, SEASONS, easterFor, resolveFestivals, activeFestivals, FESTIVALS, REGIONAL } from '../js/seasonal.js';
 import { classifyHeadline } from '../js/news_reactivity.js';
 import { deriveTraits, dominantTrait, speedMod, venueBias, traitChat } from '../js/personality.js';
+import { SupplyChain } from '../js/supply_chain.js';
 import { kardashevScale } from '../js/kardashev.js';
 import { isWetWeather, puddleLayout } from '../js/wetness.js';
 import { createGhosts, Multiplayer } from '../js/multiplayer.js';
@@ -225,6 +226,48 @@ assert(FESTIVALS.length + REGIONAL.length === 19, '19 festivals defined');
     assert(venueBias(gemini, 'lunch', exists, () => 0) === 'uni_library', 'an analytical model lunches at the library');
     assert(traitChat(seeded, () => 0) !== null, 'trait chat returns a line when the gate opens');
     assert(traitChat(seeded, () => 0.9) === null, 'trait chat mostly declines so routine chatter dominates');
+}
+
+// 10bc. Supply chain: consume -> shortage -> resupply
+{
+    // headless: no scene, so drive the state machine directly
+    SupplyChain.stock = {};
+    SupplyChain.consumers = new Array(16).fill(0).map(() => ({ b: {}, x: 0, z: 0 }));
+    SupplyChain.origin = null;
+    SupplyChain._truckMesh = null;
+    SupplyChain._shipTimer = 1e9;      // no auto-deliveries during the test
+    SupplyChain._truckTimer = 1e9;
+    SupplyChain.trucks = [];
+    for (const [k, v] of Object.entries({
+        gpu_rubin: [300, 190, 0.55, true], gpu_b200: [800, 520, 1.10, true],
+        hbm_memory: [700, 430, 0.95, true], coolant_sys: [400, 280, 0.40, false],
+        helium: [600, 410, 0.30, false], electricity: [1000, 820, 1.35, true]
+    })) {
+        SupplyChain.stock[k] = { label: k, cap: v[0], start: v[1], v: v[1], consume: v[2], critical: v[3] };
+    }
+    const step = (secs) => { for (let i = 0; i < secs * 30; i++) { SupplyChain._shipTimer = 1e9; SupplyChain.update(1 / 30); } };
+
+    SupplyChain.update(1 / 30);
+    assert(SupplyChain.shortage < 0.05, 'a stocked city is not short');
+
+    step(300);   // five minutes with nothing docking
+    assert(SupplyChain.stock.gpu_rubin.v < 60, 'accelerators drain when nothing arrives');
+    assert(SupplyChain.shortage > 0.6, `starving the city registers as a shortage (${SupplyChain.shortage.toFixed(2)})`);
+    assert(SupplyChain.snapshot().status === 'CRITICAL', 'status reads CRITICAL when starved');
+
+    /* The scarcest CRITICAL input has to dominate: averaging every stock let a
+       full grid and plenty of helium mask an empty GPU stockpile, which is the
+       one thing the simulation exists to show. */
+    for (const k of Object.keys(SupplyChain.stock)) SupplyChain.stock[k].v = SupplyChain.stock[k].cap;
+    SupplyChain.stock.gpu_rubin.v = 0;
+    SupplyChain.update(1 / 30);
+    assert(SupplyChain.shortage > 0.5, 'one empty critical input alone is a shortage');
+
+    const gained = SupplyChain.deliver({ gpu_rubin: 200 });
+    assert(gained > 0 && SupplyChain.stock.gpu_rubin.v > 150, 'a docking ship restocks');
+    SupplyChain.update(1 / 30);
+    assert(SupplyChain.shortage < 0.1, 'resupply clears the shortage');
+    assert(SupplyChain.deliver({ nonsense_item: 500 }) === 0, 'unknown cargo is ignored, not crashed on');
 }
 
 // 10c. News reactivity classifier

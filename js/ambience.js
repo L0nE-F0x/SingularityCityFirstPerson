@@ -120,7 +120,11 @@ export const Ambience = {
         for (const did of ['power', 'compute']) {
             for (const p of of(did)) {
                 if (!/coal|nuclear|fusion|datacenter|fab/.test(p.b.type)) continue;
-                for (let i = 0; i < 16; i++) {
+                /* 16 per building meant 320 additive plumes across Compute and
+                   Power; stacked over a district of 20 stacks they saturated
+                   the whole sky white. Six reads as a plume; twenty reads as
+                   fog. */
+                for (let i = 0; i < 6; i++) {
                     this.parts.push({
                         kind: PLUME, t: rng(),
                         speed: 0.10 + rng() * 0.10,
@@ -128,7 +132,7 @@ export const Ambience = {
                         oz: p.z + (rng() - 0.5) * p.d * 0.4,
                         oy: p.h + 6, rise: 130 + rng() * 90,
                         drift: (rng() - 0.5) * 60,
-                        hue: 0.58, sat: 0.05, lum: 0.82, size: 9 + rng() * 8
+                        hue: 0.58, sat: 0.05, lum: 0.82, size: 7 + rng() * 6
                     });
                 }
             }
@@ -337,7 +341,7 @@ export const Ambience = {
                     x = p.ox + p.drift * k;
                     z = p.oz + p.drift * 0.4 * k;
                     y = p.oy + k * p.rise;
-                    a = Math.sin(k * Math.PI) * 0.19;
+                    a = Math.sin(k * Math.PI) * 0.13;
                     break;
                 }
                 case COIN: {

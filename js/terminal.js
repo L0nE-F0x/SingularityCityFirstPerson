@@ -1472,10 +1472,29 @@ export const Terminal = {
         if (!host) return;
         const s = (this.model || buildTerminalModel(G)).supply;
         const bn = arr(s.bottlenecks), fo = arr(s.foundries), ac = arr(s.accelerators);
-        if (!this._dirty('supply', 's' + bn.length + fo.length + ac.length)) return;
+        // Live stockpile from the running simulation, if it is up.
+        const live = G.supplyChain?.snapshot?.() || null;
+        const key = 's' + bn.length + fo.length + ac.length +
+            (live ? ':' + live.status + live.rows.map(r => r.pct).join(',') : '');
+        if (!this._dirty('supply', key)) return;
         if (!bn.length && !fo.length && !ac.length) { host.innerHTML = '<div class="tm-empty">Supply chain data unavailable.</div>'; return; }
+        const stat = live
+            ? (live.status === 'CRITICAL' ? '#f87171' : live.status === 'TIGHT' ? '#fbbf24' : '#4ade80')
+            : '#94a3b8';
         host.innerHTML = `
-            <div class="tm-spark-lbl">BOTTLENECKS</div>
+            ${live ? `<div class="tm-spark-lbl">CITY STOCKPILE
+                <span style="color:${stat}">· ${esc(live.status)}</span>
+                <span style="color:#64748b">· ${live.consumers} consumers · ${live.trucksRolling} rolling · ${live.deliveries} landed</span>
+             </div>
+            ${bars(live.rows.map(r => ({
+                label: (r.critical ? '! ' : '') + r.label,
+                pct: r.pct,
+                value: r.pct + '%',
+                color: r.pct < 15 ? '#f87171' : r.pct < 35 ? '#fbbf24' : '#4ade80',
+                title: (r.commodity ? r.commodity.name + ' — ' + r.commodity.origin : r.label)
+                    + ' · ' + r.v + '/' + r.cap
+            })))}` : ''}
+            <div class="tm-spark-lbl" style="margin-top:6px">BOTTLENECKS</div>
             ${bars(bn.map(b => ({ label: b.name, pct: num(b.load), value: num(b.load) + '%', color: b.color, title: b.name })))}
             <div class="tm-spark-lbl" style="margin-top:6px">FOUNDRIES</div>
             <table class="tm-table"><tbody>${fo.map(f =>

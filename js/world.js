@@ -779,7 +779,16 @@ export const World = {
                 dummy.rotation.y = p.rot || 0;
                 dummy.updateMatrix();
                 im.setMatrixAt(i, dummy.matrix);
-                im.setColorAt(i, facadeTint(buildingColor(p.b)));
+                const tint = facadeTint(buildingColor(p.b));
+                im.setColorAt(i, tint);
+                /* Remember where this building lives in its instanced mesh, and
+                   its base tint. Buildings share three meshes, so any system
+                   that wants to change ONE building's look (a datacentre
+                   browning out under a GPU shortage) has to reach the instance
+                   rather than the material. */
+                if (p.b && !p._isSetback) {
+                    p.b._inst = { mesh: im, i, base: tint.clone() };
+                }
             });
             attachUVScale(im, list, t.rows);
             im.instanceMatrix.needsUpdate = true;
@@ -1008,7 +1017,13 @@ export const World = {
             d.scale.set(p.w + 4, CAP_H, p.d + 4);
             d.updateMatrix();
             caps.setMatrixAt(i, d.matrix);
-            caps.setColorAt(i, trimColor(buildingColor(p.b), 0.40));
+            const capCol = trimColor(buildingColor(p.b), 0.40).clone();
+            caps.setColorAt(i, capCol);
+            /* The parapet cap is the brightest thing on a building from above.
+               Record it alongside the mass so a brownout dims the whole
+               building — dimming only the walls left the roof vividly lit and
+               the effect didn't read at all. */
+            if (p.b) p.b._capInst = { mesh: caps, i, base: capCol };
         });
         caps.instanceMatrix.needsUpdate = true;
         if (caps.instanceColor) caps.instanceColor.needsUpdate = true;
