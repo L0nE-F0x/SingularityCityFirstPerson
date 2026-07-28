@@ -1,14 +1,11 @@
-﻿# Integrated app: Pixi 2D under /pixi/ + First Person at /index.html
-# Product entry is the 2D landing (/pixi/); FP is only linked from the 2D toolbar.
+# Integrated app: Pixi 2D under /pixi/ + First Person at /index.html
+# Public entry is the 2D landing (/pixi/); FP is only linked from the 2D toolbar.
 
 [build]
   publish = "."
   command = "echo Static integrated site - no build required"
 
-[functions]
-  directory = "pixi/netlify/functions"
-
-# --- Prefer 2D as the site entry (production-like flow) ---
+# Prefer 2D as the site entry (production-like flow).
 # force=true so root index.html (FP) is not served at "/".
 # FP remains available at /index.html (toolbar link from 2D uses that path).
 [[redirects]]
@@ -17,7 +14,7 @@
   status = 302
   force = true
 
-# --- CORS / API proxies (same as production 2D) so /pixi works on this host ---
+# CORS / API proxies (same as production 2D) so /pixi works on this host
 [[redirects]]
   from = "/api/hf/*"
   to = "https://huggingface.co/api/:splat"
@@ -45,18 +42,6 @@
 [[redirects]]
   from = "/api/celestrak/*"
   to = "https://celestrak.org/:splat"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/orbit-sats"
-  to = "/.netlify/functions/orbit-sats"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/api/geo"
-  to = "/.netlify/functions/geo"
   status = 200
   force = true
 
