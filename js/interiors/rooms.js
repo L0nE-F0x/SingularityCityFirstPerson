@@ -24,8 +24,9 @@ import { BACKBONE } from './backbone.js';
 import { AGENT_ROOMS, agentRoom } from './agents.js';
 import { ROBOTICS_ROOMS, roboticsRoom } from './robotics.js';
 import { LONGEVITY_ROOMS, longevityRoom } from './longevity.js';
+import { WORKER_HOUSING, workerRoom } from './workers.js';
 
-export const ROOM_SPECS = [BAR, UNDERGROUND, METRO, EMBASSY, VILLA, ALIGNMENT, PRESS, LEGACY, BACKBONE,
+export const ROOM_SPECS = [BAR, UNDERGROUND, METRO, EMBASSY, VILLA, ALIGNMENT, PRESS, LEGACY, BACKBONE, WORKER_HOUSING,
     ...Object.values(AGENT_ROOMS), ...Object.values(ROBOTICS_ROOMS), ...Object.values(LONGEVITY_ROOMS)];
 
 /** Which bespoke layout (if any) this building should use. */
@@ -47,6 +48,9 @@ export function resolveRoom(b) {
     if (id.startsWith('robotics_') || t === 'robotics' || b.district === 'robotics') return roboticsRoom(b);
     // Longevity Wing: five buildings, five different research stacks.
     if (id.startsWith('longevity_') || t === 'longevity' || b.district === 'longevity') return longevityRoom(b);
+    // Worker housing: six blocks of 4-6 storeys, foyer at the bottom and the
+    // laundry basement as the last stop the lift reaches.
+    if (id.startsWith('npc_apt_')) return workerRoom(b);
     return null;
 }
 
